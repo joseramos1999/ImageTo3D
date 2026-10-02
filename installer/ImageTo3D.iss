@@ -43,6 +43,8 @@ WizardStyle=modern
 ; Si la app está abierta durante una actualización, se ofrece cerrarla y se vuelve a abrir.
 CloseApplications=yes
 RestartApplications=yes
+; Registers .i3d (per user or machine-wide, matching the install mode).
+ChangesAssociations=yes
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -61,6 +63,13 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+
+[Registry]
+; Double-clicking a project opens it in ImageTo3D.
+Root: HKA; Subkey: "Software\Classes\.i3d"; ValueType: string; ValueName: ""; ValueData: "ImageTo3D.Project"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\ImageTo3D.Project"; ValueType: string; ValueName: ""; ValueData: "Proyecto ImageTo3D"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\ImageTo3D.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
+Root: HKA; Subkey: "Software\Classes\ImageTo3D.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

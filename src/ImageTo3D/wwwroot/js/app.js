@@ -5,6 +5,8 @@ import { shapesFromOutlines, buildLogoGroup } from './geometry.js';
 import { decodeImage, previewBitmap, ImageTooLargeError, LIMITS } from './imaging.js';
 import { pipeline } from './pipeline.js';
 import { initMaskUI } from './mask-ui.js';
+import { store } from './store.js';
+import { History, workSettings, serializeProject, parseProject, PROJECT_EXT } from './project.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
@@ -27,7 +29,10 @@ const DEFAULTS = {
 const STORE_KEY = 'imageto3d.settings.v1';
 const state = { ...DEFAULTS };
 try { Object.assign(state, JSON.parse(localStorage.getItem(STORE_KEY) || '{}')); } catch { /* fresh start */ }
-const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ } };
+const save = () => {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+  markDirty();
+};
 
 // ───────── engine ─────────
 const canvas = $('#canvas');
@@ -164,6 +169,7 @@ function rebuildOutlines() { requestRetrace('outlines'); }
 /** Anything that mirrors the current source (previews, autosave) refreshes from here. */
 function onSourceChanged() {
   maskUI?.refresh();
+  markDirty();
 }
 
 function rebuildMeshes() {
@@ -200,6 +206,8 @@ function applyMaterials() {
 }
 
 async function openFile(file) {
+  openGeneration++;
+  if (file?.name?.toLowerCase().endsWith('.' + PROJECT_EXT)) return openProjectFile(file);
   if (!file || !file.type.startsWith('image/')) { toast('Ese archivo no es una imagen.', 'error'); return; }
   let decoded;
   try {
@@ -212,6 +220,7 @@ async function openFile(file) {
   const { bitmap, width, height } = decoded;
   const ok = await loadSource(bitmap, { name: file.name, blob: file, thumbUrl: URL.createObjectURL(file) });
   if (!ok) return;
+  startProject();
   const reduced = Math.max(width, height) > LIMITS.workSide;
   toast(reduced
     ? `«${file.name}» (${width}×${height}) reducido a ${LIMITS.workSide} px para trabajar y convertido a 3D`
@@ -370,6 +379,246 @@ function toast(text, kind = 'info', action) {
 host.on('saved', msg => toast('Guardado en ' + msg.path, 'info', { label: 'Mostrar en carpeta', run: () => host.post({ type: 'reveal', path: msg.path }) }));
 host.on('save-failed', msg => toast('No se pudo guardar el archivo (' + msg.reason + ')', 'error'));
 
+// ───────── projects, recents, undo / redo ─────────
+// The work (image + mask + settings) is autosaved to IndexedDB a moment after every
+// change, which is both the "Recientes" list and the recovery after a restart or a
+// crash. Undo / redo keeps snapshots of settings and mask for the current project.
+const history = new History();
+let projectId = null;          // IndexedDB id of the current work (null: the demo, never stored)
+let historyTimer = 0, autosaveTimer = 0, restoring = false;
+// Bumped by every explicit open, so a start-up session restore still in flight backs off
+// (e.g. a project double-clicked in Explorer must win over the last session).
+let openGeneration = 0;
+
+function snapshot() {
+  return source ? { settings: workSettings(state), mask: { ...source.mask }, src: { blob: source.blob, name: source.name } } : null;
+}
+
+function flushHistory() {
+  if (!historyTimer) return;
+  clearTimeout(historyTimer);
+  historyTimer = 0;
+  if (restoring) return;
+  const s = snapshot();
+  if (s && history.push(s)) syncUndoUI();
+}
+
+/** Something about the work changed: record it for undo and schedule an autosave. */
+function markDirty() {
+  clearTimeout(historyTimer);
+  historyTimer = setTimeout(flushHistory, 400);
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(autosave, 1500);
+}
+
+function cameraState() {
+  return { p: stage.camera.position.toArray(), t: stage.controls.target.toArray() };
+}
+
+function applyCamera(c) {
+  if (!c?.p || !c?.t) return;
+  stage.camera.position.fromArray(c.p);
+  stage.controls.target.fromArray(c.t);
+  stage.controls.update();
+}
+
+/** A small JPEG of what the viewport shows, for the recent-projects menu. */
+async function viewportThumb() {
+  const c = new OffscreenCanvas(256, 144), g = c.getContext('2d');
+  const k = Math.max(256 / canvas.width, 144 / canvas.height);
+  const w = canvas.width * k, h = canvas.height * k;
+  g.drawImage(canvas, (256 - w) / 2, (144 - h) / 2, w, h);
+  return c.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+}
+
+async function autosave() {
+  if (!source || !projectId || exporting) return;
+  const id = projectId;
+  try {
+    if (source.storedAs !== id) { await store.putImage(id, source.blob); source.storedAs = id; }
+    await store.putProject({
+      id, name: source.name, updatedAt: Date.now(), thumb: await viewportThumb(),
+      settings: workSettings(state), mask: { ...source.mask }, camera: cameraState(), imageName: source.name,
+    });
+    await store.prune();
+  } catch (e) {
+    console.warn('autosave failed:', e);
+  }
+}
+
+/** New work: fresh project id and an empty undo history. */
+function startProject(id = crypto.randomUUID()) {
+  projectId = id;
+  history.clear();
+  syncUndoUI();
+  markDirty();
+}
+
+/** Applies a whole set of work settings at once (projects, undo / redo). */
+function applySettings(s) {
+  const prev = { ...state };
+  Object.assign(state, workSettings({ ...DEFAULTS, ...s }));
+  stage.setUserScale(state.scale);
+  applySceneToEngine();
+  syncSceneUI();
+  segSyncs.forEach(fn => fn());
+  $('#transparent').checked = state.transparent;
+  syncExportOpts();
+  if (prev.aspect !== state.aspect) layoutViewport();
+  if (logo && (prev.depth !== state.depth || prev.bevel !== state.bevel)) rebuildMeshes();
+  if (source && prev.smooth !== state.smooth) requestRetrace('outlines');
+  save();
+}
+
+async function openProjectData(p, id, generation = ++openGeneration) {
+  let decoded;
+  try {
+    decoded = await decodeImage(new File([p.image.blob], p.image.name, { type: p.image.blob.type }));
+  } catch (e) {
+    toast(e instanceof ImageTooLargeError ? e.message : 'No se pudo leer la imagen del proyecto.', 'error');
+    return false;
+  }
+  if (generation !== openGeneration) { decoded.bitmap.close(); return false; }
+  // Settings first, so the first trace already uses the project's smoothing.
+  applySettings(p.settings);
+  const ok = await loadSource(decoded.bitmap, {
+    name: p.name, blob: p.image.blob, thumbUrl: URL.createObjectURL(p.image.blob), mask: p.mask,
+  });
+  if (!ok) return false;
+  if (id) source.storedAs = id;   // the image is already in IndexedDB under this id
+  startProject(id);
+  applyCamera(p.camera);
+  return true;
+}
+
+async function openProjectFile(file) {
+  try {
+    const p = parseProject(await file.text());
+    if (await openProjectData(p)) toast(`Proyecto «${p.name}» abierto`);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function openStored(id, generation = ++openGeneration) {
+  const rec = await store.get(id);
+  if (!rec || generation !== openGeneration) return false;
+  const m = rec.meta;
+  return openProjectData({ name: m.name, settings: m.settings, mask: m.mask, camera: m.camera, image: { name: m.imageName, blob: rec.blob } }, id, generation);
+}
+
+async function saveProjectFile() {
+  if (!source) return;
+  flushHistory();
+  const text = await serializeProject({
+    name: source.name, settings: workSettings(state), mask: source.mask, camera: cameraState(),
+    image: { name: source.name, blob: source.blob },
+  });
+  const base = source.name.replace(/\.[a-z0-9]+$/i, '').replace(/[\\/:*?"<>|«»]+/g, '').trim() || 'proyecto';
+  download(new Blob([text], { type: 'application/json' }), `${base}.${PROJECT_EXT}`);
+}
+
+async function restoreEntry(entry) {
+  if (!entry || !source) return;
+  restoring = true;
+  clearTimeout(historyTimer);
+  historyTimer = 0;
+  try {
+    if (JSON.stringify(entry.mask) !== JSON.stringify(source.mask)) {
+      Object.assign(source.mask, entry.mask);
+      requestRetrace('mask');
+    }
+    applySettings(entry.settings);
+    maskUI.refresh();
+  } finally {
+    restoring = false;
+    syncUndoUI();
+  }
+}
+
+function undo() { flushHistory(); restoreEntry(history.undo()); }
+function redo() { flushHistory(); restoreEntry(history.redo()); }
+
+function syncUndoUI() {
+  $('#btn-undo').disabled = !history.canUndo;
+  $('#btn-redo').disabled = !history.canRedo;
+}
+
+async function toggleRecentMenu(open) {
+  const menu = $('#recent-menu'), btn = $('#btn-recent');
+  if (open === undefined) open = menu.hidden;
+  menu.querySelectorAll('img').forEach(i => URL.revokeObjectURL(i.src));
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  flushHistory();
+  await autosave();
+  let list = [];
+  try { list = await store.list(); } catch { /* no storage: empty list */ }
+  const items = list.map(p => {
+    const row = document.createElement('div');
+    row.className = 'recent' + (p.id === projectId ? ' current' : '');
+    const open = document.createElement('button');
+    open.className = 'recent-open';
+    const img = document.createElement('img');
+    img.alt = '';
+    if (p.thumb) img.src = URL.createObjectURL(p.thumb);
+    const name = document.createElement('span');
+    name.className = 'recent-name';
+    name.textContent = p.name;
+    const when = document.createElement('span');
+    when.className = 'recent-when';
+    when.textContent = new Date(p.updatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    open.append(img, name, when);
+    open.onclick = async () => { toggleRecentMenu(false); if (p.id !== projectId && !(await openStored(p.id))) toast('No se pudo abrir ese proyecto.', 'error'); };
+    const del = document.createElement('button');
+    del.className = 'recent-del';
+    del.title = 'Quitar de recientes';
+    del.setAttribute('aria-label', `Quitar ${p.name} de recientes`);
+    del.textContent = '×';
+    del.onclick = async () => { await store.remove(p.id); if (p.id === projectId) projectId = null; row.remove(); };
+    row.append(open, del);
+    return row;
+  });
+  if (!items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'note';
+    empty.textContent = 'Aún no hay proyectos. Se guardan solos mientras trabajas.';
+    items.push(empty);
+  }
+  menu.replaceChildren(...items);
+}
+
+function initShortcuts() {
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape') { toggleRecentMenu(false); return; }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    // Typing in a text box keeps its own undo.
+    const t = e.target;
+    if (t.matches?.('input[type=text], textarea, select')) return;
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+    else if (k === 's') { e.preventDefault(); saveProjectFile(); }
+    else if (k === 'o') { e.preventDefault(); $('#file').click(); }
+  });
+}
+
+/** Start-up: reopen the last work, or show the demo logo the very first time. */
+async function restoreLastSession() {
+  const generation = ++openGeneration;
+  try {
+    const [last] = await store.list();
+    if (generation !== openGeneration) return;
+    if (last && await openStored(last.id, generation)) return;
+    if (generation !== openGeneration) return;
+  } catch (e) {
+    console.warn('no previous session:', e);
+  }
+  await loadCanvas(demoLogo(), 'Logo de ejemplo', false);
+  projectId = null;
+}
+
 // ───────── UI wiring ─────────
 const FORMAT = {
   x: v => Number(v).toFixed(2) + 'x',
@@ -407,6 +656,7 @@ function initSliders() {
     input.addEventListener('input', () => {
       state[key] = Number(input.value);
       paint();
+      markDirty();   // here, not in the frame callback below: frames pause in a hidden window
       // Geometry rebuilds are throttled to one per frame while dragging.
       cancelAnimationFrame(pending);
       pending = requestAnimationFrame(() => { ON_CHANGE[key]?.(); save(); });
@@ -434,9 +684,12 @@ function chips(container, items, key, onPick, render = it => it.label) {
   });
 }
 
+const segSyncs = [];   // re-read state into every segmented control
+
 function segmented(id, key, onPick = () => {}) {
   const el = $(id);
   const sync = () => el.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(state[key])));
+  segSyncs.push(sync);
   el.querySelectorAll('button').forEach(b => b.onclick = () => { state[key] = b.dataset.v; sync(); onPick(b.dataset.v); save(); });
   sync();
 }
@@ -629,7 +882,7 @@ function initDragDrop() {
 
 function init() {
   initSliders();
-  maskUI = initMaskUI({ getSource: () => source, commit: requestRetrace });
+  maskUI = initMaskUI({ getSource: () => source, commit: op => { requestRetrace(op); markDirty(); } });
   initMaterials();
   initAnimations();
   initBackgrounds();
@@ -658,11 +911,22 @@ function init() {
   const makeText = () => {
     const text = $('#text-input').value.trim();
     if (!text) return;
-    loadCanvas(textLogo(text, $('#font-select').value, state.color), `Texto «${text}»`, true);
+    openGeneration++;
+    loadCanvas(textLogo(text, $('#font-select').value, state.color), `Texto «${text}»`, true).then(ok => ok && startProject());
   };
   $('#btn-text').onclick = makeText;
   $('#text-input').addEventListener('keydown', e => { if (e.key === 'Enter') makeText(); });
   $('#btn-export').onclick = runExport;
+  $('#btn-save').onclick = saveProjectFile;
+  $('#btn-undo').onclick = undo;
+  $('#btn-redo').onclick = redo;
+  $('#btn-recent').onclick = e => { e.stopPropagation(); toggleRecentMenu(); };
+  document.addEventListener('click', e => { if (!$('#recent-menu').hidden && !e.target.closest('#recent-menu')) toggleRecentMenu(false); });
+  initShortcuts();
+  syncUndoUI();
+  host.on('open-project', msg => openProjectFile(new File([msg.text], msg.name)));
+  // Last chance to keep the latest changes when the window closes.
+  addEventListener('pagehide', () => { flushHistory(); autosave(); });
   $('#btn-cancel').onclick = () => { cancelExport = true; };
   canvas.addEventListener('dblclick', frameCamera);
   setTimeout(() => { $('.hint').style.opacity = 0; }, 6000);
@@ -675,7 +939,7 @@ function init() {
   updateLoopNote();
   layoutViewport();
 
-  loadCanvas(demoLogo(), 'Logo de ejemplo', false);
+  restoreLastSession();
   requestAnimationFrame(tick);
   window.__engineReady = true;
   host.post({ type: 'ready' });

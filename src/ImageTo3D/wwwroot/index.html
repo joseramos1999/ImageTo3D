@@ -26,7 +26,15 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">3D</span> ImageTo3D</div>
-    <button class="btn" id="btn-open">Abrir imagen…</button>
+    <button class="btn" id="btn-open" title="Abrir una imagen o un proyecto .i3d (Ctrl+O)">Abrir…</button>
+    <button class="btn" id="btn-save" title="Guardar el proyecto como archivo .i3d (Ctrl+S)">Guardar</button>
+    <div class="menu-wrap">
+      <button class="btn" id="btn-recent" aria-haspopup="true" aria-expanded="false">Recientes ▾</button>
+      <div class="menu" id="recent-menu" hidden></div>
+    </div>
+    <div class="bar-sep"></div>
+    <button class="btn icon" id="btn-undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">↶</button>
+    <button class="btn icon" id="btn-redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">↷</button>
     <div class="hud" id="hud"></div>
   </header>
 
@@ -182,7 +190,7 @@
     </div>
   </div>
   <div class="toasts" id="toasts"></div>
-  <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/bmp" hidden>
+  <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/bmp,.i3d" hidden>
 
   <script type="module" src="js/app.js"></script>
 </body>

@@ -11,9 +11,17 @@ public partial class MainWindow : Window
 {
     private const string Host = "app.imageto3d";
 
+    // A project double-clicked in Explorer arrives as the first argument; it is handed to
+    // the engine once it reports "ready".
+    private string? _pendingProject;
+
     public MainWindow()
     {
         InitializeComponent();
+        var args = Environment.GetCommandLineArgs();
+        if (args.Length > 1 && File.Exists(args[1]) &&
+            string.Equals(Path.GetExtension(args[1]), ".i3d", StringComparison.OrdinalIgnoreCase))
+            _pendingProject = args[1];
         Loaded += async (_, _) => await InitWebViewAsync();
     }
 
@@ -172,6 +180,7 @@ public partial class MainWindow : Window
                 case "ready":
                     _readyTimer.Stop();
                     Splash.Visibility = Visibility.Collapsed;
+                    OpenPendingProject();
                     break;
                 case "engine-error":
                     ShowError("El motor 3D no pudo arrancar: " + (msg.GetProperty("message").GetString() ?? "error desconocido"));
@@ -181,6 +190,24 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Debug.WriteLine($"Bad web message: {ex.Message}");
+        }
+    }
+
+    private void OpenPendingProject()
+    {
+        var path = _pendingProject;
+        _pendingProject = null;
+        if (path == null) return;
+        try
+        {
+            if (new FileInfo(path).Length > 400L * 1024 * 1024)
+                throw new IOException("el archivo pesa más de 400 MB");
+            Post(new { type = "open-project", name = Path.GetFileName(path), text = File.ReadAllText(path) });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"No se pudo abrir el proyecto:\n{path}\n\n{ex.Message}", "ImageTo3D",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -201,6 +228,7 @@ public partial class MainWindow : Window
         "png" => "Imagen PNG (*.png)|*.png",
         "glb" => "Modelo glTF binario (*.glb)|*.glb",
         "stl" => "Modelo STL (*.stl)|*.stl",
+        "i3d" => "Proyecto ImageTo3D (*.i3d)|*.i3d",
         _ => "Todos los archivos (*.*)|*.*",
     };
 }
