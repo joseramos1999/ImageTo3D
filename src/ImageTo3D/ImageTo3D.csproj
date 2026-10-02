@@ -11,11 +11,13 @@
     <Product>ImageTo3D</Product>
     <Version>0.1.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+    <Resource Include="app.ico" />
   </ItemGroup>
 
   <!-- The 3D engine (HTML/JS) ships next to the exe and is served through a WebView2 virtual host. -->

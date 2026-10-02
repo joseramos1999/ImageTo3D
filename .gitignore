@@ -482,5 +482,6 @@ $RECYCLE.BIN/
 *.swp
 
 # ImageTo3D
+build/
 dist/
 tools/out/

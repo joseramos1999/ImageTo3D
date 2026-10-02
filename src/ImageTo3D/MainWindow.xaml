@@ -5,7 +5,8 @@
         Title="ImageTo3D — PNG a 3D animado"
         Width="1440" Height="900" MinWidth="1024" MinHeight="640"
         WindowStartupLocation="CenterScreen"
-        Background="#0B0B0F">
+        Background="#0B0B0F"
+        Icon="app.ico">
     <Grid>
         <wv2:WebView2 x:Name="Web" DefaultBackgroundColor="#0B0B0F" />
         <TextBlock x:Name="Splash" Text="Cargando motor 3D…" Foreground="#8A8A99"

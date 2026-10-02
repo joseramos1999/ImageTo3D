@@ -44,13 +44,30 @@ powershell -ExecutionPolicy Bypass -File tools/serve.ps1 -Port 5188
 
 En las compilaciones Debug de la app también se puede pulsar F12 dentro de la ventana.
 
-## Publicar
+## Instalador
+
+Doble clic en `Crear instalador.bat` o, desde una terminal:
 
 ```bash
-dotnet publish src/ImageTo3D/ImageTo3D.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o dist
+powershell -ExecutionPolicy Bypass -File Compilar-ImageTo3D.ps1
 ```
 
-Resultado: `dist/` (~5 MB). Requiere tener instalado el .NET 10 Desktop Runtime. Con `--self-contained true` no hace falta, pero ocupa ~70 MB.
+Requisitos: SDK de .NET 10 e [Inno Setup 6](https://jrsoftware.org/isinfo.php). Inno Setup se instala sin permisos de administrador con:
+
+```bash
+winget install --id JRSoftware.InnoSetup -e --scope user
+```
+
+El script publica la app **autocontenida** (lleva .NET dentro, no hace falta instalar nada más) en `build/publish` y genera `build/installer/ImageTo3D-Setup-<versión>.exe` (~43 MB). La versión sale de `<Version>` en [ImageTo3D.csproj](src/ImageTo3D/ImageTo3D.csproj).
+
+Qué hace el instalador ([installer/ImageTo3D.iss](installer/ImageTo3D.iss)):
+- Asistente en español o inglés. Instala por usuario sin pedir administrador, aunque se puede elegir "para todos los usuarios".
+- Crea un acceso en el menú Inicio, opcionalmente otro en el escritorio, y abre la app al terminar.
+- Avisa si falta WebView2 Runtime, que viene con Windows 11 y Windows 10 actualizado.
+- Las actualizaciones se instalan encima (mismo `AppId`) y cierran la app si está abierta.
+- El desinstalador también borra la caché y los ajustes de `%LOCALAPPDATA%\ImageTo3D`.
+
+`-SinInstalador` solo publica. El icono se regenera con `tools/make-icon.ps1`.
 
 ## Licencias de terceros
 
