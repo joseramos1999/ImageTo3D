@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ImageTo3D</title>
   <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Start-up failures go to the desktop host so it can show a recoverable error screen.
+    // Capture phase also catches modules that fail to load, which never reach app.js.
+    addEventListener('error', e => {
+      if (window.__engineReady) return;
+      const what = e.message || ('no se pudo cargar ' + (e.target && (e.target.src || e.target.href) || 'un recurso'));
+      window.chrome && window.chrome.webview && window.chrome.webview.postMessage({ type: 'engine-error', message: what });
+    }, true);
+  </script>
   <script type="importmap">
   {
     "imports": {

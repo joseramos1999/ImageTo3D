@@ -133,19 +133,36 @@ async function loadImage(file, url) {
   return img;
 }
 
+/** Builds DOM from [tag, text] parts with textContent only: file names and typed
+ *  text reach the UI, and must never be parsed as HTML. */
+function setParts(el, parts) {
+  el.replaceChildren(...parts.map(p => {
+    if (typeof p === 'string') return document.createTextNode(p);
+    const n = document.createElement(p[0]);
+    n.textContent = p[1];
+    return n;
+  }));
+}
+
 function setThumb(url) {
   const drop = $('#drop');
   if (!url) { drop.classList.remove('has-thumb'); return; }
   drop.classList.add('has-thumb');
-  drop.innerHTML = `<img src="${url}" alt=""><small>Clic o arrastra para cambiar</small>`;
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = '';
+  const small = document.createElement('small');
+  small.textContent = 'Clic o arrastra para cambiar';
+  drop.replaceChildren(img, small);
 }
 
 function updateHud(ms) {
   if (!logo) return;
   let tris = 0;
   logo.children.forEach(m => { tris += m.geometry.attributes.position.count / 3; });
-  const t = ms != null ? ` · <b>${Math.round(ms)}</b> ms` : '';
-  $('#hud').innerHTML = `${source.name} · <b>${logo.children.length}</b> piezas · <b>${Math.round(tris / 1000)}k</b> triángulos${t}`;
+  const parts = [`${source.name} · `, ['b', String(logo.children.length)], ' piezas · ', ['b', `${Math.round(tris / 1000)}k`], ' triángulos'];
+  if (ms != null) parts.push(' · ', ['b', String(Math.round(ms))], ' ms');
+  setParts($('#hud'), parts);
 }
 
 // ───────── preview loop ─────────
@@ -567,9 +584,16 @@ function init() {
 
   loadSource(demoLogo(), 'Logo de ejemplo', null);
   requestAnimationFrame(tick);
+  window.__engineReady = true;
+  host.post({ type: 'ready' });
 }
 
-init();
+try {
+  init();
+} catch (e) {
+  console.error(e);
+  host.post({ type: 'engine-error', message: e.message || String(e) });
+}
 
 // Handy for debugging from DevTools (F12 in debug builds).
 window.__app = { state, stage, THREE, get logo() { return logo; }, resetPose };

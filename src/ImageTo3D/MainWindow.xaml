@@ -11,5 +11,17 @@
         <wv2:WebView2 x:Name="Web" DefaultBackgroundColor="#0B0B0F" />
         <TextBlock x:Name="Splash" Text="Cargando motor 3D…" Foreground="#8A8A99"
                    FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <!-- Shown instead of a blank window when the engine page fails to load or crashes. -->
+        <Border x:Name="ErrorPanel" Visibility="Collapsed" Background="#0B0B0F">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+                <TextBlock Text="No se pudo cargar el motor 3D" Foreground="#E9E9EF" FontSize="18"
+                           FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,10" />
+                <TextBlock x:Name="ErrorText" Foreground="#8A8A99" FontSize="13" TextWrapping="Wrap"
+                           TextAlignment="Center" Margin="0,0,0,18" />
+                <Button x:Name="RetryButton" Content="Reintentar" Padding="18,7" HorizontalAlignment="Center"
+                        Background="#C8F55A" Foreground="#11140A" BorderThickness="0" FontWeight="SemiBold"
+                        Click="OnRetry" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

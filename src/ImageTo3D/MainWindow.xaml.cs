@@ -37,6 +37,11 @@ public partial class MainWindow : Window
 
         var core = Web.CoreWebView2;
         var root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        if (!File.Exists(Path.Combine(root, "index.html")))
+        {
+            ShowError($"Falta la carpeta del motor junto al ejecutable:\n{root}\n\nReinstala la aplicación.", canRetry: false);
+            return;
+        }
         core.SetVirtualHostNameToFolderMapping(Host, root, CoreWebView2HostResourceAccessKind.Allow);
 
 #if !DEBUG
@@ -48,9 +53,64 @@ public partial class MainWindow : Window
 
         core.DownloadStarting += OnDownloadStarting;
         core.WebMessageReceived += OnWebMessage;
-        core.NavigationCompleted += (_, _) => Splash.Visibility = Visibility.Collapsed;
+        core.NavigationCompleted += OnNavigationCompleted;
+        core.ProcessFailed += OnProcessFailed;
 
-        core.Navigate($"https://{Host}/index.html");
+        _readyTimer.Interval = TimeSpan.FromSeconds(20);
+        _readyTimer.Tick += (_, _) =>
+        {
+            _readyTimer.Stop();
+            ShowError("El motor 3D no ha terminado de arrancar. Puede que la tarjeta gráfica o sus controladores no admitan WebGL 2.");
+        };
+
+        Navigate();
+    }
+
+    // The page loading is not enough: the engine reports "ready" once WebGL and the
+    // scene are up, so a failure in between still ends on a recoverable error screen.
+    private readonly System.Windows.Threading.DispatcherTimer _readyTimer = new();
+
+    private void Navigate()
+    {
+        ErrorPanel.Visibility = Visibility.Collapsed;
+        Splash.Visibility = Visibility.Visible;
+        Web.CoreWebView2.Navigate($"https://{Host}/index.html");
+    }
+
+    private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (!e.IsSuccess)
+        {
+            ShowError($"La página del motor no se pudo abrir ({e.WebErrorStatus}).");
+            return;
+        }
+        _readyTimer.Stop();
+        _readyTimer.Start();
+    }
+
+    private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        // The browser process going away takes the whole control with it; renderer or GPU
+        // crashes can be recovered by reloading the page.
+        var fatal = e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited;
+        ShowError(fatal
+            ? "El componente WebView2 se ha cerrado inesperadamente. Cierra y vuelve a abrir la aplicación."
+            : $"El motor 3D se ha detenido ({e.ProcessFailedKind}). Tu último trabajo se recupera al reintentar.",
+            canRetry: !fatal);
+    }
+
+    private void ShowError(string message, bool canRetry = true)
+    {
+        _readyTimer.Stop();
+        Splash.Visibility = Visibility.Collapsed;
+        ErrorText.Text = message;
+        RetryButton.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
+        ErrorPanel.Visibility = Visibility.Visible;
+    }
+
+    private void OnRetry(object sender, RoutedEventArgs e)
+    {
+        if (Web.CoreWebView2 != null) Navigate();
     }
 
     // Every export in the engine ends in a blob download; intercept it so the user gets
@@ -108,6 +168,13 @@ public partial class MainWindow : Window
                     break;
                 case "title":
                     Title = msg.GetProperty("text").GetString() ?? Title;
+                    break;
+                case "ready":
+                    _readyTimer.Stop();
+                    Splash.Visibility = Visibility.Collapsed;
+                    break;
+                case "engine-error":
+                    ShowError("El motor 3D no pudo arrancar: " + (msg.GetProperty("message").GetString() ?? "error desconocido"));
                     break;
             }
         }
