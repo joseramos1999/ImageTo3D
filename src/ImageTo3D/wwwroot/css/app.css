@@ -238,3 +238,11 @@ input[type=color] {
 .toast.error { border-left-color: var(--danger); }
 .toast button { background: none; border: 0; color: var(--accent); cursor: pointer; font-weight: 600; padding: 0; white-space: nowrap; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* ── processing indicator (image pipeline running in the worker) ── */
+.stage.busy .viewport::after {
+  content: ""; position: absolute; top: 14px; right: 14px; width: 18px; height: 18px;
+  border: 2px solid rgba(255,255,255,.2); border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

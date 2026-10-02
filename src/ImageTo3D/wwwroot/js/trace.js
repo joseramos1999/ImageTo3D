@@ -7,11 +7,24 @@
 // The field is soft rather than thresholded, so an anti-aliased PNG gives
 // sub-pixel accurate outlines instead of 1px stair steps.
 
+// No imports: this module also runs inside the pipeline Web Worker.
+
 const ISO = 0.5;
 
-/** Reads the image into an ink field. Transparent PNGs use alpha; opaque images
- *  (JPG, screenshots) key out the background color sampled from the border. */
-export function inkField(img, maxDim = 1000) {
+/**
+ * How logo ("ink") is told apart from background. Stored per project.
+ *  mode: 'auto'  — transparency if the image has any, else the dominant border color
+ *        'alpha' — the alpha channel
+ *        'color' — distance from `color` (pick the background with the eyedropper)
+ *        'luma'  — dark pixels are logo (invert for light-on-dark)
+ *  tolerance 0..1: where the cut sits (0.5 = default for every mode)
+ *  denoise 0..10: removes specks and pinholes smaller than a growing area
+ *  fillHoles: ignore every hole (solid silhouette)
+ */
+export const DEFAULT_MASK = { mode: 'auto', color: '#ffffff', tolerance: 0.5, invert: false, denoise: 2, fillHoles: false };
+
+/** Reads the image into an ink field (0..1 per pixel, 0.5 = the cut). */
+export function inkField(img, mask = DEFAULT_MASK, maxDim = 1000) {
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   // Small logos are upscaled (smoothly) so the tracer has enough resolution.
   const scale = Math.min(4, maxDim / Math.max(iw, ih));
@@ -22,7 +35,7 @@ export function inkField(img, maxDim = 1000) {
   ctx.drawImage(img, 0, 0, w, h);
   const data = ctx.getImageData(0, 0, w, h).data;
 
-  const key = detectKey(data, w, h);
+  const key = resolveKey(data, w, h, mask);
   // 1px of empty padding all round guarantees every contour closes.
   const W = w + 2, H = h + 2;
   const field = new Float32Array(W * H);
@@ -35,13 +48,32 @@ export function inkField(img, maxDim = 1000) {
   return { field, W, H, w, h, key };
 }
 
-/** Decides how "ink" is told apart from background. */
-export function detectKey(data, w, h) {
-  let transparent = 0;
-  for (let i = 3; i < data.length; i += 4) if (data[i] < 128) transparent++;
-  if (transparent / (w * h) > 0.01) return { mode: 'alpha' };
+const hexRgb = hex => {
+  const n = parseInt(String(hex).replace('#', ''), 16) || 0;
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+};
 
-  // Opaque image: the background is the dominant border color.
+/** Turns the user's mask settings into a concrete key for this image. */
+export function resolveKey(data, w, h, mask = DEFAULT_MASK) {
+  const tol = Math.max(0, Math.min(1, mask.tolerance ?? 0.5));
+  const invert = !!mask.invert;
+  // Colour distance: tolerance 0.5 → 28 (what worked for JPEGs), up to ~106 for noisy photos.
+  const colorKey = rgb => ({ mode: 'color', ...rgb, lo: 2 + 104 * tol * tol, hi: 2 + 104 * tol * tol + 50, invert });
+
+  let mode = mask.mode || 'auto';
+  if (mode === 'auto') {
+    let transparent = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] < 128) transparent++;
+    if (transparent / (w * h) > 0.01) return { mode: 'alpha', cutoff: tol, invert, auto: 'alpha' };
+    return { ...colorKey(borderColor(data, w, h)), auto: 'color' };
+  }
+  if (mode === 'alpha') return { mode: 'alpha', cutoff: Math.max(0.03, Math.min(0.97, tol)), invert };
+  if (mode === 'color') return colorKey(hexRgb(mask.color));
+  return { mode: 'luma', thr: 255 * tol, invert };
+}
+
+/** The dominant colour along the image border (quantised so JPEG noise votes together). */
+export function borderColor(data, w, h) {
   const buckets = new Map();
   const sample = (x, y) => {
     const i = (y * w + x) * 4;
@@ -54,13 +86,23 @@ export function detectKey(data, w, h) {
   for (let y = 0; y < h; y++) { sample(0, y); sample(w - 1, y); }
   let best = null;
   buckets.forEach(b => { if (!best || b.n > best.n) best = b; });
-  return { mode: 'key', r: best.r / best.n, g: best.g / best.n, b: best.b / best.n, lo: 28, hi: 90 };
+  return { r: best.r / best.n, g: best.g / best.n, b: best.b / best.n };
 }
 
 export function inkValue(key, r, g, b, a) {
-  if (key.mode === 'alpha') return a / 255;
-  const d = Math.hypot(r - key.r, g - key.g, b - key.b);
-  return Math.max(0, Math.min(1, (d - key.lo) / (key.hi - key.lo)));
+  let v;
+  if (key.mode === 'alpha') {
+    // Linear ramp centred on the cutoff, so anti-aliased edges keep their sub-pixel position.
+    v = (a / 255 - key.cutoff) / 0.5 + 0.5;
+  } else if (key.mode === 'color') {
+    v = (Math.hypot(r - key.r, g - key.g, b - key.b) - key.lo) / (key.hi - key.lo);
+    v *= a / 255;   // transparent pixels are never logo
+  } else {
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    v = ((key.thr - lum) / 40 + 0.5) * (a / 255);
+  }
+  v = Math.max(0, Math.min(1, v));
+  return key.invert ? 1 - v : v;
 }
 
 /** Marching squares over the field. Returns closed loops of {x,y} points in
@@ -216,9 +258,12 @@ export function simplifyLoop(loop, eps) {
  * Raw loops → [{ outer, holes[] }] in field coordinates.
  * smoothness: 0..6 (how much stair-step smoothing to apply).
  */
-export function buildOutlines(rawLoops, { W, H }, smoothness = 2) {
+const DENOISE_AREA = [0, 10, 40, 120, 300, 700, 1500, 3000, 6000, 12000, 25000];   // px² at 1000 px
+
+export function buildOutlines(rawLoops, { W, H }, smoothness = 2, { denoise = 2, fillHoles = false } = {}) {
   const px = Math.max(W, H) / 1000;           // tolerances scale with trace resolution
-  const minArea = Math.max(6, 40 * px * px);  // speck filter
+  // Speck and pinhole filter (applies to outlines and holes alike).
+  const minArea = Math.max(4, DENOISE_AREA[Math.max(0, Math.min(10, Math.round(denoise)))] * px * px);
   const iterations = [0, 1, 3, 5, 8, 12, 16][Math.max(0, Math.min(6, smoothness))];
 
   const loops = rawLoops
@@ -232,6 +277,11 @@ export function buildOutlines(rawLoops, { W, H }, smoothness = 2) {
   const outers = loops.filter(l => Math.sign(l.area) === outerSign).map(l => ({ outer: l.pts, area: Math.abs(l.area), holes: [] }));
   const holes = loops.filter(l => Math.sign(l.area) !== outerSign);
   outers.sort((a, b) => a.area - b.area);   // smallest first → innermost container wins
+  if (fillHoles) {
+    // A solid silhouette: holes go, and so do islands that sat inside them.
+    const solid = outers.filter(o => !outers.some(p => p !== o && p.area > o.area && pointInLoop(o.outer[0], p.outer)));
+    return solid;
+  }
   for (const h of holes) {
     const owner = outers.find(o => o.area > Math.abs(h.area) && pointInLoop(h.pts[0], o.outer));
     if (owner) owner.holes.push(h.pts);

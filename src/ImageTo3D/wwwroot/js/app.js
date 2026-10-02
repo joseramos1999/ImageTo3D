@@ -1,7 +1,9 @@
 // App controller: UI state ↔ engine.
 import * as THREE from 'three';
-import { inkField, marchingSquares, buildOutlines } from './trace.js';
-import { shapesFromOutlines, buildLogoGroup, buildColorCanvas } from './geometry.js';
+import { DEFAULT_MASK } from './trace.js';
+import { shapesFromOutlines, buildLogoGroup } from './geometry.js';
+import { decodeImage, previewBitmap, ImageTooLargeError, LIMITS } from './imaging.js';
+import { pipeline } from './pipeline.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
@@ -29,43 +31,119 @@ const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)
 // ───────── engine ─────────
 const canvas = $('#canvas');
 const stage = new Stage(canvas);
-let source = null;     // { name, trace, rawLoops, colorTex, shapeSet }
+let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, outlines, shapeSet, before, after }
 let logo = null;       // THREE.Group of piece meshes
 let materials = [];
 let exporting = false, cancelExport = false;
 
 // ───────── source loading ─────────
-async function loadSource(img, name, thumbUrl) {
+// The image work (tracing, colour texture, mask preview) runs in a Web Worker; only the
+// extrusion happens here. Every request bumps `pipeJob`, so a slow result that has been
+// overtaken by a newer one is dropped instead of overwriting it.
+let pipeJob = 0;
+
+function setBusy(on) {
+  clearTimeout(setBusy.t);
+  // Short jobs never flash the spinner.
+  if (on) setBusy.t = setTimeout(() => $('#stage').classList.add('busy'), 150);
+  else $('#stage').classList.remove('busy');
+}
+
+const NO_SHAPE_MSG = 'No se encontró la forma del logo. Ajusta la máscara (modo de fondo y umbral) en «Recorte».';
+
+/** Takes ownership of `bitmap`. `blob` is the original file, kept for saving projects. */
+async function loadSource(bitmap, { name, blob, thumbUrl = null, mask = DEFAULT_MASK }) {
+  const job = ++pipeJob;
+  setBusy(true);
   const t0 = performance.now();
-  const trace = inkField(img);
-  const rawLoops = marchingSquares(trace);
-  const outlines = buildOutlines(rawLoops, trace, state.smooth);
-  if (!outlines.length) {
-    toast('No se pudo encontrar la forma del logo. Prueba con un PNG transparente o con más contraste.', 'error');
-    return;
+  try {
+    const before = await previewBitmap(bitmap);
+    const r = await pipeline.load(bitmap, mask, state.smooth);
+    if (job !== pipeJob) { r.color?.close(); r.after?.close(); before.close(); return false; }
+    disposeSource();
+    // The worker now holds this image, so it becomes the source even when nothing was
+    // found: the mask controls are how the user fixes that.
+    source = { name, blob, thumbUrl, mask: { ...DEFAULT_MASK, ...mask }, before };
+    applyAnalysis(r);
+    rebuildMeshes();
+    frameCamera();
+    setThumb(thumbUrl);
+    updateHud(performance.now() - t0);
+    onSourceChanged();
+    if (!r.outlines.length) toast(NO_SHAPE_MSG, 'error');
+    return true;
+  } catch (e) {
+    console.error(e);
+    if (job === pipeJob) toast('No se pudo procesar la imagen: ' + e.message, 'error');
+    return false;
+  } finally {
+    if (job === pipeJob) setBusy(false);
   }
-  const colorTex = new THREE.CanvasTexture(buildColorCanvas(img));
-  colorTex.flipY = false;               // planar UVs run top→bottom like canvas rows
-  colorTex.colorSpace = THREE.SRGBColorSpace;
-  colorTex.anisotropy = stage.renderer.capabilities.getMaxAnisotropy();
-
-  if (source?.colorTex) source.colorTex.dispose();
-  source = { name, trace, rawLoops, colorTex };
-  source.shapeSet = shapesFromOutlines(outlines, trace);
-  rebuildMeshes();
-  stage.frame();
-  setThumb(thumbUrl);
-  updateHud(performance.now() - t0);
 }
 
-function rebuildOutlines() {
+/** Re-runs the pipeline for the current image: 'mask' redoes everything, 'outlines' only
+ *  the smoothing / denoise / holes step. */
+async function retrace(op) {
   if (!source) return;
-  const outlines = buildOutlines(source.rawLoops, source.trace, state.smooth);
-  if (!outlines.length) return;
-  source.shapeSet = shapesFromOutlines(outlines, source.trace);
-  rebuildMeshes();
-  updateHud();
+  const job = ++pipeJob;
+  setBusy(true);
+  try {
+    const r = op === 'mask'
+      ? await pipeline.remask(source.mask, state.smooth)
+      : await pipeline.outlines(state.smooth, source.mask);
+    if (job !== pipeJob) { r.color?.close(); r.after?.close(); return; }
+    const hadShape = !!source.outlines?.length;
+    applyAnalysis(r);
+    rebuildMeshes();
+    if (!hadShape && r.outlines.length) frameCamera();
+    updateHud();
+    onSourceChanged();
+    if (!r.outlines.length) toast(NO_SHAPE_MSG, 'error');
+  } catch (e) {
+    console.error(e);
+    if (job === pipeJob) toast('No se pudo procesar la imagen: ' + e.message, 'error');
+  } finally {
+    if (job === pipeJob) setBusy(false);
+  }
 }
+
+function applyAnalysis(r) {
+  if (r.color) {
+    source.colorTex?.image?.close?.();
+    source.colorTex?.dispose();
+    const tex = new THREE.Texture(r.color);
+    tex.flipY = false;               // planar UVs run top→bottom like image rows
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = stage.renderer.capabilities.getMaxAnisotropy();
+    tex.needsUpdate = true;
+    source.colorTex = tex;
+    source.meta = r.meta;
+    source.key = r.key;
+  }
+  source.after?.close();
+  source.after = r.after;
+  source.outlines = r.outlines;
+  source.shapeSet = shapesFromOutlines(r.outlines, source.meta);
+}
+
+function disposeSource() {
+  if (!source) return;
+  source.colorTex?.image?.close?.();
+  source.colorTex?.dispose();
+  source.before?.close();
+  source.after?.close();
+  if (source.thumbUrl) URL.revokeObjectURL(source.thumbUrl);
+}
+
+/** Frames the logo, leaving room for animations that spin it in its own plane. */
+function frameCamera() {
+  stage.frame(!!getAnimation(state.anim).round);
+}
+
+function rebuildOutlines() { retrace('outlines'); }
+
+/** Anything that mirrors the current source (previews, autosave) refreshes from here. */
+function onSourceChanged() {}
 
 function rebuildMeshes() {
   if (!source) return;
@@ -102,35 +180,27 @@ function applyMaterials() {
 
 async function openFile(file) {
   if (!file || !file.type.startsWith('image/')) { toast('Ese archivo no es una imagen.', 'error'); return; }
-  const url = URL.createObjectURL(file);
+  let decoded;
   try {
-    const img = await loadImage(file, url);
-    let src = img;
-    // Vectors are rasterised big so the tracer sees crisp edges whatever the SVG's own size.
-    if (file.type === 'image/svg+xml' || !img.width) {
-      const w = img.naturalWidth || img.width || 1024, h = img.naturalHeight || img.height || 1024;
-      const k = 2048 / Math.max(w, h);
-      src = document.createElement('canvas');
-      src.width = Math.round(w * k); src.height = Math.round(h * k);
-      src.getContext('2d').drawImage(img, 0, 0, src.width, src.height);
-    }
-    await loadSource(src, file.name, url);
-    toast(`«${file.name}» convertido a 3D`);
+    decoded = await decodeImage(file);
   } catch (e) {
     console.error(e);
-    toast('No se pudo leer la imagen.', 'error');
+    toast(e instanceof ImageTooLargeError ? e.message : 'No se pudo leer la imagen.', 'error');
+    return;
   }
+  const { bitmap, width, height } = decoded;
+  const ok = await loadSource(bitmap, { name: file.name, blob: file, thumbUrl: URL.createObjectURL(file) });
+  if (!ok) return;
+  const reduced = Math.max(width, height) > LIMITS.workSide;
+  toast(reduced
+    ? `«${file.name}» (${width}×${height}) reducido a ${LIMITS.workSide} px para trabajar y convertido a 3D`
+    : `«${file.name}» convertido a 3D`);
 }
 
-/** Raster formats decode off the main thread; SVG needs an <img> to rasterise.
- *  (img.decode() is avoided: it can stall while the window is hidden.) */
-async function loadImage(file, url) {
-  if (file.type !== 'image/svg+xml') {
-    try { return await createImageBitmap(file); } catch { /* fall back to <img> */ }
-  }
-  const img = new Image();
-  await new Promise((ok, ko) => { img.onload = ok; img.onerror = () => ko(new Error('decode')); img.src = url; });
-  return img;
+/** Text and the demo logo are drawn on a canvas and go through the same pipeline. */
+async function loadCanvas(canvas, name, withThumb) {
+  const [bitmap, blob] = await Promise.all([createImageBitmap(canvas), new Promise(r => canvas.toBlob(r, 'image/png'))]);
+  return loadSource(bitmap, { name, blob, thumbUrl: withThumb ? URL.createObjectURL(blob) : null });
 }
 
 /** Builds DOM from [tag, text] parts with textContent only: file names and typed
@@ -204,6 +274,7 @@ function exportDims() {
 
 async function runExport() {
   if (!logo || exporting) return;
+  if (!logo.children.length) { toast(NO_SHAPE_MSG, 'error'); return; }
   const fmt = state.format;
   try {
     if (fmt === 'glb') { const r = await exportGLB(logo, state.scale); download(r.blob, r.filename); return; }
@@ -546,7 +617,7 @@ function init() {
   segmented('#side-mode', 'sideMode', () => { applyMaterials(); syncColorRows(); });
   segmented('#format', 'format', syncExportOpts);
   segmented('#res', 'res');
-  segmented('#aspect', 'aspect', () => { layoutViewport(); stage.frame(); });
+  segmented('#aspect', 'aspect', () => { layoutViewport(); frameCamera(); });
   segmented('#fps', 'fps');
 
   $('#color').value = state.color;
@@ -565,13 +636,13 @@ function init() {
   const makeText = () => {
     const text = $('#text-input').value.trim();
     if (!text) return;
-    loadSource(textLogo(text, $('#font-select').value, state.color), `Texto «${text}»`, null);
+    loadCanvas(textLogo(text, $('#font-select').value, state.color), `Texto «${text}»`, true);
   };
   $('#btn-text').onclick = makeText;
   $('#text-input').addEventListener('keydown', e => { if (e.key === 'Enter') makeText(); });
   $('#btn-export').onclick = runExport;
   $('#btn-cancel').onclick = () => { cancelExport = true; };
-  canvas.addEventListener('dblclick', () => stage.frame());
+  canvas.addEventListener('dblclick', frameCamera);
   setTimeout(() => { $('.hint').style.opacity = 0; }, 6000);
   initDragDrop();
 
@@ -582,7 +653,7 @@ function init() {
   updateLoopNote();
   layoutViewport();
 
-  loadSource(demoLogo(), 'Logo de ejemplo', null);
+  loadCanvas(demoLogo(), 'Logo de ejemplo', false);
   requestAnimationFrame(tick);
   window.__engineReady = true;
   host.post({ type: 'ready' });
