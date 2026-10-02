@@ -56,6 +56,26 @@
         </div>
       </section>
 
+      <section class="sec" id="mask-sec">
+        <h2>Recorte</h2>
+        <div class="mask-view"><canvas id="mask-canvas" aria-label="Vista previa del recorte"></canvas></div>
+        <div class="row mask-tools">
+          <div class="seg" id="mask-view-mode" role="group" aria-label="Vista">
+            <button data-v="before">Antes</button><button data-v="split">Comparar</button><button data-v="after">Después</button>
+          </div>
+          <button class="btn small" id="mask-pick" title="Elige el color del fondo haciendo clic en la vista previa">Cuentagotas</button>
+        </div>
+        <label class="sub">Qué es fondo</label>
+        <div class="chips" id="mask-mode" role="group" aria-label="Qué es fondo"></div>
+        <p class="note" id="mask-info"></p>
+        <div class="row"><label for="mask-color">Color del fondo</label><input type="color" id="mask-color"></div>
+        <div class="slider" id="mask-tol"></div>
+        <div class="slider" id="mask-denoise"></div>
+        <div class="row"><label>Invertir</label><label class="switch"><input type="checkbox" id="mask-invert" aria-label="Invertir"><span></span></label></div>
+        <div class="row"><label>Rellenar agujeros</label><label class="switch"><input type="checkbox" id="mask-fill" aria-label="Rellenar agujeros"><span></span></label></div>
+        <button class="btn small mask-reset" id="mask-reset">Restablecer recorte</button>
+      </section>
+
       <section class="sec">
         <h2>Geometría</h2>
         <div class="slider" data-key="depth" data-label="Profundidad" data-min="0.04" data-max="1.6" data-step="0.01"></div>

@@ -246,3 +246,21 @@ input[type=color] {
   animation: spin .7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── mask ("Recorte") ── */
+.mask-view {
+  border-radius: 8px; overflow: hidden; border: 1px solid var(--line);
+  background: repeating-conic-gradient(#1d1d25 0 25%, #15151b 0 50%) 0 0 / 14px 14px;
+  display: grid; place-items: center;
+}
+#mask-canvas { display: block; max-width: 100%; max-height: 200px; width: auto; height: auto; touch-action: none; }
+#mask-canvas.split { cursor: ew-resize; }
+#mask-canvas.picking { cursor: crosshair; }
+.mask-tools { justify-content: space-between; }
+.mask-tools .seg button { padding: 4px 8px; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+.mask-swatch {
+  display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.3);
+}
+.mask-reset { margin-top: 12px; }

@@ -4,6 +4,7 @@ import { DEFAULT_MASK } from './trace.js';
 import { shapesFromOutlines, buildLogoGroup } from './geometry.js';
 import { decodeImage, previewBitmap, ImageTooLargeError, LIMITS } from './imaging.js';
 import { pipeline } from './pipeline.js';
+import { initMaskUI } from './mask-ui.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
@@ -35,6 +36,7 @@ let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, out
 let logo = null;       // THREE.Group of piece meshes
 let materials = [];
 let exporting = false, cancelExport = false;
+let maskUI = null;
 
 // ───────── source loading ─────────
 // The image work (tracing, colour texture, mask preview) runs in a Web Worker; only the
@@ -140,10 +142,29 @@ function frameCamera() {
   stage.frame(!!getAnimation(state.anim).round);
 }
 
-function rebuildOutlines() { retrace('outlines'); }
+// Dragging a slider fires many changes; only one retrace runs at a time and, while it
+// runs, further requests collapse into a single follow-up (a 'mask' one wins, as it
+// includes the 'outlines' step).
+let retraceRunning = false, retraceNext = null;
+function requestRetrace(op) {
+  retraceNext = retraceNext === 'mask' || op === 'mask' ? 'mask' : 'outlines';
+  if (retraceRunning) return;
+  retraceRunning = true;
+  (async () => {
+    try {
+      while (retraceNext) { const next = retraceNext; retraceNext = null; await retrace(next); }
+    } finally {
+      retraceRunning = false;
+    }
+  })();
+}
+
+function rebuildOutlines() { requestRetrace('outlines'); }
 
 /** Anything that mirrors the current source (previews, autosave) refreshes from here. */
-function onSourceChanged() {}
+function onSourceChanged() {
+  maskUI?.refresh();
+}
 
 function rebuildMeshes() {
   if (!source) return;
@@ -370,7 +391,7 @@ const ON_CHANGE = {
 const sliderSync = {};   // key → re-reads state into the slider
 
 function initSliders() {
-  document.querySelectorAll('.slider').forEach(el => {
+  document.querySelectorAll('.slider[data-key]').forEach(el => {
     const key = el.dataset.key, fmt = FORMAT[el.dataset.fmt] || (v => String(v));
     el.innerHTML = `<div class="lbl"><span>${el.dataset.label}</span><span></span></div>
       <input type="range" min="${el.dataset.min}" max="${el.dataset.max}" step="${el.dataset.step}">`;
@@ -608,6 +629,7 @@ function initDragDrop() {
 
 function init() {
   initSliders();
+  maskUI = initMaskUI({ getSource: () => source, commit: requestRetrace });
   initMaterials();
   initAnimations();
   initBackgrounds();
