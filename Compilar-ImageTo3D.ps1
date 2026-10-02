@@ -43,7 +43,17 @@ $crono = [Diagnostics.Stopwatch]::StartNew()
 # --- Publicación ---
 Write-Host ""
 Write-Host "[1/2] Publicando (autocontenido, no necesita .NET instalado)..." -ForegroundColor Cyan
-if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
+if (Test-Path $publish) {
+    try { Remove-Item $publish -Recurse -Force -ErrorAction Stop }
+    catch {
+        # Files left by an elevated process (owner: Administradores) cannot be deleted from a
+        # normal terminal. Publish to a fresh folder instead of shipping stale files.
+        $publish = Join-Path $dir ("build\publish-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $exe = Join-Path $publish 'ImageTo3D.exe'
+        Write-Host "  No se pudo vaciar build\publish (archivos de un proceso con permisos de administrador)." -ForegroundColor Yellow
+        Write-Host "  Se publica en $publish. Puedes borrar build\publish desde una terminal de administrador." -ForegroundColor Yellow
+    }
+}
 dotnet publish $proyecto -c Release -r win-x64 --self-contained `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
     -o $publish --nologo --verbosity quiet

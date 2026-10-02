@@ -4,22 +4,42 @@ App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto
 
 Funciona sin conexión: todo se renderiza en local, con la GPU.
 
+## Qué hace
+
+- **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, limpieza de ruido, inversión, relleno de agujeros y una vista previa antes / comparar / después.
+- **Geometría:** profundidad, bisel, suavizado y escala.
+- **Aspecto:** 24 materiales, 6 iluminaciones, 5 suelos, 12 fondos, bloom, partículas y 5 movimientos de cámara.
+- **Animación:** 60 animaciones (38 bucles y 21 intros, 20 de ellas por piezas) y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
+- **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
+- **Exportación:** vídeo MP4 hasta 4K60 en 16:9, 9:16 o 1:1 (escrito a disco mientras se renderiza, con bucle perfecto), PNG con fondo transparente, GLB y STL en milímetros.
+
 ## Arquitectura
 
 ```
 ImageTo3D.exe (WPF, .NET 10)
  └─ WebView2 (Chromium de Edge, viene con Windows 11)
      └─ https://app.imageto3d/  →  carpeta wwwroot/ (host virtual, sin servidor)
-         ├─ js/trace.js       PNG → campo de "tinta" → marching squares interpolado → contornos + agujeros
-         ├─ js/geometry.js    contornos → ExtrudeGeometry con bisel, UV planares, textura de color (erosión + push-pull)
-         ├─ js/materials.js   24 materiales (colores del logo, oro, cromo, cristal, diamante, neón, holo…)
-         ├─ js/animations.js  32 animaciones (21 bucles + 10 intros + estático), funciones puras del tiempo
-         ├─ js/stage.js       render, luces, suelos (sombra, espejo, rejilla, foco), fondos, bloom, partículas, cámara
-         ├─ js/exporter.js    MP4 (WebCodecs H.264 + mp4-muxer), PNG, GLB, STL
-         └─ js/app.js         interfaz ↔ motor
+         ├─ js/imaging.js         dimensiones por cabecera, límites, decodificación ya reducida
+         ├─ js/pipeline*.js       Web Worker: trazado, textura de color y vista previa del recorte
+         │   ├─ js/trace.js       llave de recorte → campo de "tinta" → marching squares interpolado → contornos
+         │   └─ js/colormap.js    textura de color sin halos (erosión + dilatación + push-pull)
+         ├─ js/geometry.js        contornos → ExtrudeGeometry con bisel y UV planares (hilo principal)
+         ├─ js/materials.js       24 materiales
+         ├─ js/animations.js      60 animaciones, funciones puras del tiempo
+         ├─ js/presets.js         16 estilos predeterminados
+         ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
+         ├─ js/exporter.js        MP4 (WebCodecs H.264 + mp4-muxer), PNG, GLB, STL
+         ├─ js/filesink.js        escritura del vídeo a disco a través del host
+         ├─ js/project.js         formato .i3d e historial de deshacer
+         ├─ js/store.js           IndexedDB: recientes y recuperación
+         └─ js/app.js, mask-ui.js interfaz ↔ motor
 ```
 
-El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs)) intercepta las descargas del motor y muestra el diálogo nativo "Guardar como". Después avisa al motor para que ofrezca "Mostrar en carpeta".
+El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs)) se encarga de:
+- mostrar el diálogo nativo "Guardar como" al exportar;
+- escribir en disco los vídeos que llegan por trozos;
+- abrir los `.i3d` que se le pasan por línea de comandos (doble clic en el Explorador);
+- mostrar una pantalla de error con "Reintentar" si el motor no arranca o WebView2 falla.
 
 ### Decisiones clave
 
@@ -27,6 +47,8 @@ El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs)) intercept
 - **Colores del logo.** UV planares en todas las caras. La textura de color sustituye el borde (mezclado con el fondo) por el color sólido más cercano, de modo que el bisel y los laterales no muestran halos.
 - **Vídeo determinista.** Cada frame se renderiza en un instante exacto (`i / fps`) y se codifica con WebCodecs. No se pierden frames aunque el equipo sea lento.
 - **Bucle perfecto.** La velocidad se ajusta para que quepa un número entero de ciclos en la duración elegida. La cámara y las partículas también son periódicas en esa duración.
+- **La interfaz nunca se congela.** El trazado y la textura van en un Web Worker. Las imágenes de más de 100 MP se rechazan antes de decodificarse, y las que pasan de 4096 px se decodifican ya reducidas.
+- **Memoria plana al exportar.** En la app de escritorio el MP4 se escribe en el archivo mientras se codifica, no en memoria.
 
 ## Desarrollo
 
@@ -64,8 +86,9 @@ Qué hace el instalador ([installer/ImageTo3D.iss](installer/ImageTo3D.iss)):
 - Asistente en español o inglés. Instala por usuario sin pedir administrador, aunque se puede elegir "para todos los usuarios".
 - Crea un acceso en el menú Inicio, opcionalmente otro en el escritorio, y abre la app al terminar.
 - Avisa si falta WebView2 Runtime, que viene con Windows 11 y Windows 10 actualizado.
-- Las actualizaciones se instalan encima (mismo `AppId`) y cierran la app si está abierta.
-- El desinstalador también borra la caché y los ajustes de `%LOCALAPPDATA%\ImageTo3D`.
+- Asocia los archivos `.i3d`: un doble clic abre el proyecto en ImageTo3D.
+- Las actualizaciones se instalan encima (mismo `AppId`), cierran la app si está abierta y conservan los recientes.
+- El desinstalador también borra `%LOCALAPPDATA%\ImageTo3D`: la caché, los ajustes y la lista de recientes. Los `.i3d` guardados por el usuario no se tocan.
 
 `-SinInstalador` solo publica. El icono se regenera con `tools/make-icon.ps1`.
 
