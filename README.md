@@ -8,10 +8,10 @@ Funciona sin conexión: todo se renderiza en local, con la GPU.
 
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, limpieza de ruido, inversión, relleno de agujeros y una vista previa antes / comparar / después.
 - **Geometría:** profundidad, bisel, suavizado y escala.
-- **Aspecto:** 24 materiales, 6 iluminaciones, 5 suelos, 12 fondos, bloom, partículas y 5 movimientos de cámara.
-- **Animación:** 60 animaciones (38 bucles y 21 intros, 20 de ellas por piezas) y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
+- **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
+- **Animación:** 83 animaciones (48 bucles y 34 intros, 26 de ellas por piezas; algunas revelan el logo con planos de recorte), un bucle opcional tras cada intro y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
-- **Exportación:** vídeo MP4 hasta 4K60 en 16:9, 9:16 o 1:1 (escrito a disco mientras se renderiza, con bucle perfecto), PNG con fondo transparente, GLB y STL en milímetros.
+- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
 ## Arquitectura
 
@@ -28,7 +28,8 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/animations.js      60 animaciones, funciones puras del tiempo
          ├─ js/presets.js         16 estilos predeterminados
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
-         ├─ js/exporter.js        MP4 (WebCodecs H.264 + mp4-muxer), PNG, GLB, STL
+         ├─ js/exporter.js        MP4 (H.264) y WebM (VP9, con alfa), secuencia PNG (js/zip.js), PNG, GLB, STL
+         ├─ js/formats.js         tamaños de salida predefinidos y personalizado
          ├─ js/filesink.js        escritura del vídeo a disco a través del host
          ├─ js/project.js         formato .i3d e historial de deshacer
          ├─ js/store.js           IndexedDB: recientes y recuperación
@@ -48,7 +49,8 @@ El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs)) se encarg
 - **Vídeo determinista.** Cada frame se renderiza en un instante exacto (`i / fps`) y se codifica con WebCodecs. No se pierden frames aunque el equipo sea lento.
 - **Bucle perfecto.** La velocidad se ajusta para que quepa un número entero de ciclos en la duración elegida. La cámara y las partículas también son periódicas en esa duración.
 - **La interfaz nunca se congela.** El trazado y la textura van en un Web Worker. Las imágenes de más de 100 MP se rechazan antes de decodificarse, y las que pasan de 4096 px se decodifican ya reducidas.
-- **Memoria plana al exportar.** En la app de escritorio el MP4 se escribe en el archivo mientras se codifica, no en memoria.
+- **Memoria plana al exportar.** En la app de escritorio el vídeo o el ZIP se escribe en el archivo mientras se codifica, no en memoria.
+- **WebM con transparencia sin soporte nativo.** WebCodecs no codifica alfa en Edge, así que se codifican dos flujos VP9 (color y alfa como luma) y el alfa se guarda como `BlockAdditional`, igual que hace Chrome por dentro. Requiere un parche de una línea en `vendor/webm-muxer`, comentado en el código.
 
 ## Desarrollo
 
@@ -96,4 +98,5 @@ Qué hace el instalador ([installer/ImageTo3D.iss](installer/ImageTo3D.iss)):
 
 - three.js r186: MIT ([wwwroot/vendor/three/LICENSE](src/ImageTo3D/wwwroot/vendor/three/LICENSE))
 - mp4-muxer 5.2.2: MIT
+- webm-muxer 5.1.4: MIT (con un parche de una línea para el alfa, comentado)
 - Microsoft.Web.WebView2: licencia de Microsoft
