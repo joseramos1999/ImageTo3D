@@ -1,0 +1,14 @@
+<Window x:Class="ImageTo3D.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="ImageTo3D — PNG a 3D animado"
+        Width="1440" Height="900" MinWidth="1024" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="#0B0B0F">
+    <Grid>
+        <wv2:WebView2 x:Name="Web" DefaultBackgroundColor="#0B0B0F" />
+        <TextBlock x:Name="Splash" Text="Cargando motor 3D…" Foreground="#8A8A99"
+                   FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Grid>
+</Window>

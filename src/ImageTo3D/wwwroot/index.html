@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ImageTo3D</title>
+  <link rel="stylesheet" href="css/app.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/build/three.module.js",
+      "three/addons/": "./vendor/three/addons/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">3D</span> ImageTo3D</div>
+    <button class="btn" id="btn-open">Abrir imagen…</button>
+    <div class="hud" id="hud"></div>
+  </header>
+
+  <main class="layout">
+    <!-- ───────── Left: logo + material ───────── -->
+    <aside class="panel" id="panel-left">
+      <section class="sec">
+        <h2>Logo</h2>
+        <div class="drop" id="drop">
+          <div class="drop-icon">⬆</div>
+          <div><b>Arrastra un PNG</b> o haz clic</div>
+          <small>PNG transparente ideal · también JPG, WEBP, SVG · Ctrl+V pega</small>
+        </div>
+        <div class="text-row">
+          <input id="text-input" type="text" maxlength="40" placeholder="…o escribe un texto 3D">
+          <select id="font-select">
+            <option value="900 400px 'Arial Black', Arial">Arial Black</option>
+            <option value="400 400px Impact">Impact</option>
+            <option value="900 400px 'Segoe UI Black', 'Segoe UI'">Segoe Black</option>
+            <option value="700 400px Bahnschrift">Bahnschrift</option>
+            <option value="700 400px Georgia">Georgia</option>
+            <option value="700 400px 'Comic Sans MS'">Comic</option>
+            <option value="700 400px Consolas">Consolas</option>
+            <option value="italic 700 400px 'Segoe Script'">Script</option>
+          </select>
+          <button class="btn small" id="btn-text">Crear</button>
+        </div>
+      </section>
+
+      <section class="sec">
+        <h2>Geometría</h2>
+        <div class="slider" data-key="depth" data-label="Profundidad" data-min="0.04" data-max="1.6" data-step="0.01"></div>
+        <div class="slider" data-key="bevel" data-label="Bisel" data-min="0" data-max="0.12" data-step="0.005"></div>
+        <div class="slider" data-key="smooth" data-label="Suavizado" data-min="0" data-max="6" data-step="1"></div>
+        <div class="slider" data-key="scale" data-label="Escala" data-min="0.4" data-max="1.8" data-step="0.05" data-fmt="x"></div>
+      </section>
+
+      <section class="sec">
+        <h2>Material</h2>
+        <div class="chips swatches" id="materials"></div>
+        <div class="row" id="color-row">
+          <label>Color</label>
+          <input type="color" id="color">
+        </div>
+        <div class="row" id="side-row">
+          <label>Laterales</label>
+          <div class="seg" id="side-mode">
+            <button data-v="logo">Del logo</button><button data-v="custom">Color</button>
+          </div>
+          <input type="color" id="side-color">
+        </div>
+      </section>
+    </aside>
+
+    <!-- ───────── Centre: stage ───────── -->
+    <section class="stage" id="stage">
+      <div class="viewport" id="viewport">
+        <canvas id="canvas"></canvas>
+        <div class="hint">Arrastra para rotar · Rueda para zoom · Doble clic para reencuadrar</div>
+      </div>
+      <div class="drop-overlay" id="drop-overlay">Suelta la imagen para convertirla en 3D</div>
+    </section>
+
+    <!-- ───────── Right: animation, scene, export ───────── -->
+    <aside class="panel" id="panel-right">
+      <section class="sec">
+        <h2>Animación</h2>
+        <div class="seg tabs" id="anim-tabs">
+          <button data-v="loop">Bucle</button><button data-v="intro">Intro</button>
+        </div>
+        <div class="chips" id="animations"></div>
+        <div class="slider" data-key="speed" data-label="Velocidad" data-min="0.1" data-max="3" data-step="0.05" data-fmt="x"></div>
+      </section>
+
+      <section class="sec">
+        <h2>Escena</h2>
+        <label class="sub">Iluminación</label>
+        <div class="chips" id="lighting"></div>
+        <div class="slider" data-key="lightGain" data-label="Intensidad" data-min="0.3" data-max="2" data-step="0.05" data-fmt="%"></div>
+        <label class="sub">Suelo</label>
+        <div class="chips" id="floors"></div>
+        <label class="sub">Fondo</label>
+        <div class="bgs" id="backgrounds"></div>
+        <label class="sub">Cámara</label>
+        <div class="chips" id="cameras"></div>
+        <div class="slider" data-key="bloom" data-label="Brillo (bloom)" data-min="0" data-max="1.5" data-step="0.05" data-fmt="off"></div>
+        <div class="slider" data-key="bloomTh" data-label="Umbral bloom" data-min="0" data-max="1" data-step="0.01"></div>
+        <div class="row">
+          <label>Partículas</label>
+          <label class="switch"><input type="checkbox" id="particles"><span></span></label>
+        </div>
+        <div class="slider" data-key="density" data-label="Densidad" data-min="0.3" data-max="3" data-step="0.1" data-fmt="%"></div>
+      </section>
+
+      <section class="sec">
+        <h2>Exportar</h2>
+        <div class="seg" id="format">
+          <button data-v="mp4">MP4</button><button data-v="png">PNG</button><button data-v="glb">GLB</button><button data-v="stl">STL</button>
+        </div>
+        <div class="export-opts" data-for="mp4 png">
+          <div class="row"><label>Calidad</label>
+            <div class="seg" id="res"><button data-v="1080">1080p</button><button data-v="2160">4K</button></div>
+          </div>
+          <div class="row"><label>Formato</label>
+            <div class="seg" id="aspect"><button data-v="16:9">16:9</button><button data-v="9:16">9:16</button><button data-v="1:1">1:1</button></div>
+          </div>
+        </div>
+        <div class="export-opts" data-for="mp4">
+          <div class="row"><label>FPS</label>
+            <div class="seg" id="fps"><button data-v="30">30</button><button data-v="60">60</button></div>
+          </div>
+          <div class="slider" data-key="seconds" data-label="Duración" data-min="2" data-max="20" data-step="1" data-fmt="s"></div>
+          <p class="note" id="loop-note"></p>
+        </div>
+        <div class="export-opts" data-for="png">
+          <div class="row"><label>Fondo transparente</label>
+            <label class="switch"><input type="checkbox" id="transparent"><span></span></label>
+          </div>
+        </div>
+        <div class="export-opts" data-for="stl">
+          <div class="slider" data-key="stlWidth" data-label="Ancho impresión" data-min="20" data-max="300" data-step="5" data-fmt="mm"></div>
+        </div>
+        <button class="btn primary wide" id="btn-export">Exportar</button>
+      </section>
+    </aside>
+  </main>
+
+  <div class="modal" id="progress" hidden>
+    <div class="modal-card">
+      <div class="modal-title" id="progress-title">Renderizando vídeo…</div>
+      <div class="bar"><div id="progress-bar"></div></div>
+      <div class="modal-row"><span id="progress-text">0%</span><button class="btn small" id="btn-cancel">Cancelar</button></div>
+    </div>
+  </div>
+  <div class="toasts" id="toasts"></div>
+  <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/bmp" hidden>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
