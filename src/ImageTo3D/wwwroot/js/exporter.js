@@ -1,8 +1,10 @@
-// Exports: MP4 video, PNG still, GLB and STL models.
+// Exports: MP4 / WebM video, PNG sequence (ZIP), PNG still, GLB and STL models.
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
-import { Muxer, ArrayBufferTarget, StreamTarget } from '../vendor/mp4-muxer/mp4-muxer.mjs';
+import * as MP4 from '../vendor/mp4-muxer/mp4-muxer.mjs';
+import * as WEBM from '../vendor/webm-muxer/webm-muxer.mjs';
+import { ZipWriter } from './zip.js';
 
 export function download(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -17,16 +19,25 @@ export function download(blob, filename) {
 
 const stamp = () => new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
 
-/** Finds an encoder config the machine supports, best first. */
-async function pickCodec(width, height, fps, bitrate) {
-  const candidates = [
-    // H.264 High → Main → Baseline, levels high enough for 4K60 down to 1080p
+/** Video containers: what each can hold and how its muxer names the codec. */
+const CODECS = {
+  // H.264 High → Main → Baseline, levels high enough for 4K60 down to 1080p; VP9 / AV1 as a last resort
+  mp4: [
     ...['avc1.640034', 'avc1.640033', 'avc1.640032', 'avc1.64002A', 'avc1.4D0034', 'avc1.4D0033', 'avc1.4D002A', 'avc1.42003E', 'avc1.42002A']
       .map(codec => ({ codec, muxCodec: 'avc', avc: { format: 'avc' } })),
     { codec: 'vp09.00.51.08', muxCodec: 'vp9' },
     { codec: 'av01.0.12M.08', muxCodec: 'av1' },
-  ];
-  for (const c of candidates) {
+  ],
+  webm: [
+    { codec: 'vp09.00.51.08', muxCodec: 'V_VP9' },
+    { codec: 'vp09.00.41.08', muxCodec: 'V_VP9' },
+    { codec: 'vp8', muxCodec: 'V_VP8' },
+  ],
+};
+
+/** Finds an encoder config the machine supports, best first. */
+async function pickCodec(container, width, height, fps, bitrate) {
+  for (const c of CODECS[container]) {
     for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
       const config = { codec: c.codec, width, height, bitrate, framerate: fps, hardwareAcceleration, latencyMode: 'quality' };
       if (c.avc) config.avc = c.avc;
@@ -42,23 +53,72 @@ async function pickCodec(width, height, fps, bitrate) {
 /** ≈12 Mbps at 1080p30, ≈50 Mbps at 4K30. */
 export const videoBitrate = (width, height, fps) => Math.round(width * height * fps * 0.2);
 
-/** Expected file size in bytes (the encoder targets this bitrate; real files land close). */
-export const estimateVideoBytes = (width, height, fps, seconds) => videoBitrate(width, height, fps) * seconds / 8;
+/** Expected file size in bytes (the encoder targets this bitrate; real files land close).
+ *  A transparent WebM carries a second (alpha) stream; PNG frames of a logo on a clear
+ *  background run around 0.6 bytes per pixel. */
+export function estimateBytes(kind, width, height, fps, seconds, alpha) {
+  if (kind === 'pngseq') return width * height * 0.6 * fps * seconds;
+  return videoBitrate(width, height, fps) * seconds / 8 * (alpha ? 1.35 : 1);
+}
 
 const supportCache = new Map();
-/** Can this machine encode (codec) and render (GPU) at this size? → { ok, reason } */
-export async function checkVideoSupport(renderer, width, height, fps) {
+/** Can this machine render (GPU) and, for video, encode at this size? → { ok, reason } */
+export async function checkVideoSupport(renderer, kind, width, height, fps) {
   const gl = renderer.getContext();
   const maxRender = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), gl.getParameter(gl.MAX_TEXTURE_SIZE));
   if (Math.max(width, height) > maxRender) {
-    return { ok: false, reason: `Tu tarjeta gráfica no puede renderizar a ${width}×${height} (máximo ${maxRender} px). Usa 1080p.` };
+    return { ok: false, reason: `Tu tarjeta gráfica no puede renderizar a ${width}×${height} (máximo ${maxRender} px). Elige un tamaño menor.` };
   }
+  if (kind === 'pngseq') return { ok: true };
   if (typeof VideoEncoder === 'undefined') return { ok: false, reason: 'Este sistema no soporta codificación de vídeo (WebCodecs).' };
-  const key = `${width}x${height}@${fps}`;
-  if (!supportCache.has(key)) supportCache.set(key, pickCodec(width, height, fps, videoBitrate(width, height, fps)));
+  const key = `${kind}:${width}x${height}@${fps}`;
+  if (!supportCache.has(key)) supportCache.set(key, pickCodec(kind, width, height, fps, videoBitrate(width, height, fps)));
   return (await supportCache.get(key))
     ? { ok: true }
-    : { ok: false, reason: `Tu equipo no tiene un codificador de vídeo para ${width}×${height} a ${fps} fps. Prueba 1080p o 30 fps.` };
+    : { ok: false, reason: `Tu equipo no tiene un codificador ${kind === 'webm' ? 'VP9' : 'H.264'} para ${width}×${height} a ${fps} fps. Prueba un tamaño menor o 30 fps.` };
+}
+
+/**
+ * Reads the rendered frame back (WebGL rows run bottom-up, colours premultiplied) and
+ * produces what a transparent WebM needs: the colour image with straight alpha, and the
+ * alpha plane as the luma of an I420 frame (chroma flat at 128) for its own VP9 stream.
+ */
+class AlphaSplitter {
+  constructor(gl, width, height) {
+    this.gl = gl; this.w = width; this.h = height;
+    this.pixels = new Uint8Array(width * height * 4);
+    this.color = new Uint8Array(width * height * 4);
+    this.alpha = new Uint8Array(width * height * 3 / 2).fill(128);
+  }
+
+  read() {
+    const { gl, w, h, pixels, color, alpha } = this;
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    for (let y = 0; y < h; y++) {
+      let s = (h - 1 - y) * w * 4, d = y * w * 4, ya = y * w;
+      for (let x = 0; x < w; x++, s += 4, d += 4) {
+        const a = pixels[s + 3];
+        alpha[ya + x] = a;
+        if (a === 255) { color[d] = pixels[s]; color[d + 1] = pixels[s + 1]; color[d + 2] = pixels[s + 2]; }
+        else if (a === 0) { color[d] = color[d + 1] = color[d + 2] = 0; }
+        else {
+          const k = 255 / a;
+          color[d] = Math.min(255, pixels[s] * k);
+          color[d + 1] = Math.min(255, pixels[s + 1] * k);
+          color[d + 2] = Math.min(255, pixels[s + 2] * k);
+        }
+        color[d + 3] = 255;
+      }
+    }
+  }
+
+  frames(timestamp, duration) {
+    const init = { codedWidth: this.w, codedHeight: this.h, timestamp, duration };
+    return {
+      color: new VideoFrame(this.color, { ...init, format: 'RGBA' }),
+      alpha: new VideoFrame(this.alpha, { ...init, format: 'I420' }),
+    };
+  }
 }
 
 /**
@@ -66,30 +126,62 @@ export async function checkVideoSupport(renderer, width, height, fps) {
  * renderFrame(i, timeSeconds) must pose and render the scene onto `canvas`.
  * Every frame is rendered regardless of machine speed, so nothing is dropped.
  *
- * With a `sink` (desktop app) the MP4 is streamed into the file as it encodes, so memory
+ * kind 'mp4' (H.264) or 'webm' (VP9; with `alpha` it keeps the transparency).
+ * With a `sink` (desktop app) the file is streamed to disk as it encodes, so memory
  * stays flat however long the clip; without one it is built in memory and returned.
  */
-export async function exportVideo({ canvas, width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null }) {
+export async function exportVideo({ canvas, renderer, kind = 'mp4', alpha = false, width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null }) {
   if (typeof VideoEncoder === 'undefined') throw new Error('Este sistema no soporta codificación de vídeo (WebCodecs).');
-  const picked = await pickCodec(width, height, fps, videoBitrate(width, height, fps));
+  const bitrate = videoBitrate(width, height, fps);
+  const picked = await pickCodec(kind, width, height, fps, bitrate);
   if (!picked) throw new Error(`No hay códec de vídeo disponible para ${width}×${height}.`);
+  const withAlpha = alpha && kind === 'webm';
 
-  const memory = sink ? null : new ArrayBufferTarget();
-  const muxer = new Muxer({
-    target: sink
-      ? new StreamTarget({ onData: (data, position) => sink.write(position, data), chunked: true, chunkSize: 4 * 1024 * 1024 })
-      : memory,
-    video: { codec: picked.muxCodec, width, height, frameRate: fps },
-    // Streaming puts the index at the end (the header is patched once all frames are in);
-    // in memory it goes first. Both play everywhere.
-    fastStart: sink ? false : 'in-memory',
-  });
+  const lib = kind === 'webm' ? WEBM : MP4;
+  const memory = sink ? null : new lib.ArrayBufferTarget();
+  const target = sink
+    ? new lib.StreamTarget({ onData: (data, position) => sink.write(position, data), chunked: true, chunkSize: 4 * 1024 * 1024 })
+    : memory;
+  const muxer = kind === 'webm'
+    ? new WEBM.Muxer({ target, video: { codec: picked.muxCodec, width, height, frameRate: fps, alpha: withAlpha } })
+    : new MP4.Muxer({
+      target,
+      video: { codec: picked.muxCodec, width, height, frameRate: fps },
+      // Streaming puts the index at the end (the header is patched once all frames are in);
+      // in memory it goes first. Both play everywhere.
+      fastStart: sink ? false : 'in-memory',
+    });
+
   let encodeError = null;
-  const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: e => { encodeError = e; },
-  });
-  encoder.configure(picked.config);
+  const fail = e => { encodeError ||= e; };
+  const encoders = [];
+  let colorEncoder;
+  if (!withAlpha) {
+    colorEncoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: fail });
+  } else {
+    // Two VP9 streams in lockstep: colour, and the alpha plane as luma. Each frame is
+    // muxed once both halves exist, with the alpha as its BlockAdditional.
+    const pending = new Map();
+    const pair = (ts, part, value) => {
+      const p = pending.get(ts) || {};
+      p[part] = value;
+      if (!p.color || !p.alpha) { pending.set(ts, p); return; }
+      pending.delete(ts);
+      const bytes = new Uint8Array(p.color.chunk.byteLength);
+      p.color.chunk.copyTo(bytes);
+      muxer.addVideoChunkRaw(bytes, p.color.chunk.type, ts, { ...(p.color.meta || {}), alphaSideData: p.alpha });
+    };
+    colorEncoder = new VideoEncoder({ output: (chunk, meta) => pair(chunk.timestamp, 'color', { chunk, meta }), error: fail });
+    const alphaEncoder = new VideoEncoder({
+      output: chunk => { const b = new Uint8Array(chunk.byteLength); chunk.copyTo(b); pair(chunk.timestamp, 'alpha', b); },
+      error: fail,
+    });
+    alphaEncoder.configure({ ...picked.config, bitrate: Math.round(bitrate * 0.35) });
+    encoders.push(alphaEncoder);
+  }
+  colorEncoder.configure(picked.config);
+  encoders.unshift(colorEncoder);
+  const splitter = withAlpha ? new AlphaSplitter(renderer.getContext(), width, height) : null;
 
   const total = Math.round(seconds * fps);
   const frameUs = 1e6 / fps;
@@ -97,35 +189,73 @@ export async function exportVideo({ canvas, width, height, fps, seconds, renderF
   try {
     for (let i = 0; i < total; i++) {
       if (encodeError) throw encodeError;
-      if (isCancelled()) { encoder.close(); return null; }
+      if (isCancelled()) { encoders.forEach(e => e.close()); return null; }
       renderFrame(i, i / fps);
-      const frame = new VideoFrame(canvas, { timestamp: Math.round(i * frameUs), duration: Math.round(frameUs) });
-      encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
-      frame.close();
-      // Back-pressure: let the encoder drain so memory stays flat on long 4K clips (each
+      const timestamp = Math.round(i * frameUs), duration = Math.round(frameUs);
+      const keyFrame = i % (fps * 2) === 0;
+      if (splitter) {
+        splitter.read();
+        const f = splitter.frames(timestamp, duration);
+        colorEncoder.encode(f.color, { keyFrame });
+        encoders[1].encode(f.alpha, { keyFrame });
+        f.color.close(); f.alpha.close();
+      } else {
+        const frame = new VideoFrame(canvas, { timestamp, duration });
+        colorEncoder.encode(frame, { keyFrame });
+        frame.close();
+      }
+      // Back-pressure: let the encoders drain so memory stays flat on long 4K clips (each
       // queued frame is a full RGBA copy: ~8 MB at 1080p, ~33 MB at 4K → keep ~100 MB)...
-      while (encoder.encodeQueueSize > maxQueue) await new Promise(r => setTimeout(r, 2));
+      while (encoders.some(e => e.encodeQueueSize > maxQueue)) await new Promise(r => setTimeout(r, 2));
       // ...and the disk keep up, when streaming.
       if (sink) await sink.drain(32 * 1024 * 1024);
       if (i % 4 === 0) { onProgress((i + 1) / total); await new Promise(r => setTimeout(r, 0)); }
     }
-    await encoder.flush();
+    await Promise.all(encoders.map(e => e.flush()));
     if (encodeError) throw encodeError;
   } finally {
-    if (encoder.state !== 'closed') encoder.close();
+    encoders.forEach(e => { if (e.state !== 'closed') e.close(); });
   }
   muxer.finalize();
   if (sink) await sink.close();
   onProgress(1);
   return {
-    blob: memory ? new Blob([memory.buffer], { type: 'video/mp4' }) : null,
+    blob: memory ? new Blob([memory.buffer], { type: kind === 'webm' ? 'video/webm' : 'video/mp4' }) : null,
     path: sink?.path ?? null,
     bytes: memory ? memory.buffer.byteLength : sink.written,
     codec: picked.config.codec,
   };
 }
 
-export const videoFileName = (width, height) => `logo3d-${width}x${height}-${stamp()}.mp4`;
+/**
+ * The animation as one PNG per frame, packed in a ZIP: the format editors (Premiere,
+ * After Effects, DaVinci Resolve) import as a clip with transparency.
+ */
+export async function exportPngSequence({ canvas, width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null }) {
+  const parts = [];
+  const zip = new ZipWriter(sink ? (pos, bytes) => sink.write(pos, bytes) : (pos, bytes) => parts.push(bytes));
+  const total = Math.round(seconds * fps);
+  const digits = String(total).length < 5 ? 5 : String(total).length;
+  for (let i = 0; i < total; i++) {
+    if (isCancelled()) return null;
+    renderFrame(i, i / fps);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    zip.addFile(`frame_${String(i + 1).padStart(digits, '0')}.png`, new Uint8Array(await blob.arrayBuffer()));
+    if (sink) await sink.drain(32 * 1024 * 1024);
+    onProgress((i + 1) / total);
+  }
+  const readme = `Secuencia PNG de ImageTo3D\n${total} fotogramas · ${width}×${height} · ${fps} fps\n\n` +
+    `Importa la carpeta como secuencia de imágenes a ${fps} fps (Premiere: Importar > Secuencia de imágenes;\n` +
+    `After Effects: Importar archivo > Secuencia PNG; DaVinci Resolve: arrastra la carpeta).\n`;
+  zip.addFile('LEEME.txt', new TextEncoder().encode(readme));
+  zip.finish();
+  if (sink) await sink.close();
+  onProgress(1);
+  return { blob: sink ? null : new Blob(parts, { type: 'application/zip' }), path: sink?.path ?? null };
+}
+
+const EXT = { mp4: 'mp4', webm: 'webm', pngseq: 'zip' };
+export const animationFileName = (kind, width, height) => `logo3d-${width}x${height}-${stamp()}.${EXT[kind]}`;
 
 export async function exportPNG({ canvas, renderFrame, width, height }) {
   renderFrame();

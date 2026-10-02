@@ -307,3 +307,8 @@ input[type=color] {
 }
 .custom-size input:focus { border-color: var(--accent); outline: none; }
 .custom-size .times { color: var(--muted); }
+
+/* ── export formats and transparency ── */
+#format.format-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+#format.format-grid button { padding: 6px 4px; }
+.viewport.transparent { background: repeating-conic-gradient(#2a2a33 0 25%, #1c1c23 0 50%) 0 0 / 18px 18px; }

@@ -316,7 +316,7 @@ public partial class MainWindow : Window
 
     private static string DefaultFolderFor(string ext) => ext switch
     {
-        "mp4" or "webm" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+        "mp4" or "webm" or "zip" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
         "png" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         _ => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
     };
@@ -329,6 +329,7 @@ public partial class MainWindow : Window
         "glb" => "Modelo glTF binario (*.glb)|*.glb",
         "stl" => "Modelo STL (*.stl)|*.stl",
         "i3d" => "Proyecto ImageTo3D (*.i3d)|*.i3d",
+        "zip" => "Secuencia PNG en ZIP (*.zip)|*.zip",
         _ => "Todos los archivos (*.*)|*.*",
     };
 }

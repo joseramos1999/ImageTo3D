@@ -48,6 +48,8 @@ export const BACKGROUNDS = [
   { id: 'lime', css: '#c8f55a', spec: { type: 'radial', a: '#d8ff7a', b: '#8fb52a' } },
   { id: 'cream', css: '#f5ead6', spec: { type: 'radial', a: '#fff8ea', b: '#e2d2b4' } },
   { id: 'green', css: '#00b140', spec: { type: 'solid', a: '#00b140' } },   // chroma key
+  // Checkerboard in the UI; renders with alpha 0 around the logo (PNG, WebM and PNG sequence keep it).
+  { id: 'transparent', css: 'repeating-conic-gradient(#3a3a46 0 25%, #22222a 0 50%) 0 0 / 10px 10px', spec: { type: 'transparent' } },
 ];
 
 function gradientCanvas(spec, w = 1024, h = 1024) {
@@ -352,10 +354,13 @@ export class Stage {
 
   // ── Background ──
   setBackground(spec) {
-    if (spec === this.bgSpec && this.scene.background) return;
+    if (spec === this.bgSpec && (this.scene.background || this.transparent)) return;
     this.bgSpec = spec;
+    this.transparent = spec.type === 'transparent';
     if (this.bgTexture) { this.bgTexture.dispose(); this.bgTexture = null; }
-    if (spec.type === 'solid') {
+    if (this.transparent) {
+      this.scene.background = null;
+    } else if (spec.type === 'solid') {
       this.scene.background = new THREE.Color(spec.a);
     } else {
       this.bgTexture = new THREE.CanvasTexture(gradientCanvas(spec));
@@ -491,14 +496,18 @@ export class Stage {
       cam.lookAt(target);
     }
 
-    if (transparent) {
-      const bg = this.scene.background, floorVisible = this.floorGroup.visible;
+    if (transparent || this.transparent) {
+      // Straight to the canvas with alpha: the post-processing chain would flatten it.
+      // Of the floor only its shadow survives (a mirror or grid floating in nothing looks wrong),
+      // and there is no bloom.
+      const bg = this.scene.background;
+      const hidden = this.floorGroup.children.filter(o => o.visible && !o.material?.isShadowMaterial);
+      hidden.forEach(o => { o.visible = false; });
       this.scene.background = null;
-      this.floorGroup.visible = this.floorId === 'shadow';
       this.renderer.setClearColor(0x000000, 0);
       this.renderer.render(this.scene, cam);
       this.scene.background = bg;
-      this.floorGroup.visible = floorVisible;
+      hidden.forEach(o => { o.visible = true; });
     } else {
       this.composer.render();
     }

@@ -11,7 +11,7 @@ import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
-import { exportVideo, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateVideoBytes, videoFileName } from './exporter.js';
+import { exportVideo, exportPngSequence, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
 import { openSink } from './filesink.js';
 import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host } from './host.js';
@@ -189,12 +189,19 @@ function rebuildMeshes() {
 function applySceneToEngine() {
   stage.setLighting(state.lighting, state.lightGain);
   stage.setBackground((BACKGROUNDS.find(b => b.id === state.bg) || BACKGROUNDS[0]).spec);
+  syncTransparency();
   stage.setFloor(state.floor);
   stage.setBloom(state.bloom, state.bloomTh);
   stage.setParticles(state.particles, state.density);
   stage.cameraMove = state.camMove;
   stage.updateFloorHeight(!!getAnimation(state.anim).tall);
   applyMaterials();
+}
+
+/** The checkerboard behind the viewport and the export notes follow the "Transparente" background. */
+function syncTransparency() {
+  $('#viewport').classList.toggle('transparent', stage.transparent);
+  updateExportEstimate();
 }
 
 function applyMaterials() {
@@ -300,6 +307,9 @@ function exportDims() {
   return sizeOf(state);
 }
 
+// Animated outputs share one path: video (MP4 / WebM) or a PNG sequence in a ZIP.
+const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', pngseq: 'secuencia PNG' };
+
 async function runExport() {
   if (!logo || exporting) return;
   if (!logo.children.length) { toast(NO_SHAPE_MSG, 'error'); return; }
@@ -310,17 +320,17 @@ async function runExport() {
 
     const [w, h] = exportDims();
     const anim = getAnimation(state.anim);
+    const fps = Number(state.fps), seconds = state.seconds;
     let sink = null;
-    if (fmt === 'mp4') {
-      const fps = Number(state.fps);
-      const support = await checkVideoSupport(stage.renderer, w, h, fps);
+    if (ANIMATED[fmt]) {
+      const support = await checkVideoSupport(stage.renderer, fmt, w, h, fps);
       if (!support.ok) { toast(support.reason, 'error'); return; }
       if (host.isDesktop) {
-        // Where to save is asked first, then the video streams into that file as it renders.
-        sink = await openSink(videoFileName(w, h));
+        // Where to save is asked first, then the file streams to disk as it renders.
+        sink = await openSink(animationFileName(fmt, w, h));
         if (!sink) return;
-      } else if (estimateVideoBytes(w, h, fps, state.seconds) > 1.5 * 1024 ** 3) {
-        toast('Ese vídeo pasaría de 1,5 GB y en el navegador se monta entero en memoria. Acórtalo o usa la app de escritorio.', 'error');
+      } else if (estimateBytes(fmt, w, h, fps, seconds, stage.transparent) > 1.5 * 1024 ** 3) {
+        toast('Eso pasaría de 1,5 GB y en el navegador se monta entero en memoria. Acórtalo o usa la app de escritorio.', 'error');
         return;
       }
     }
@@ -332,33 +342,33 @@ async function runExport() {
           canvas, width: w, height: h,
           renderFrame: () => {
             poseAt(anim, anim.kind === 'intro' ? anim.duration : animClock, stage.motion, logo.children, true);
-            stage.render((camClock % state.seconds) / state.seconds, { transparent: state.transparent });
+            stage.render((camClock % seconds) / seconds);
           },
         });
         download(r.blob, r.filename);
         return;
       }
 
-      const seconds = state.seconds, fps = Number(state.fps);
       const fit = fitLoop(anim, seconds, state.speed);
       cancelExport = false;
-      showProgress(`Renderizando vídeo ${w}×${h} · ${fps} fps…`);
+      showProgress(`Renderizando ${ANIMATED[fmt]}${stage.transparent && fmt !== 'mp4' ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
+      const job = {
+        canvas, renderer: stage.renderer, kind: fmt, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
+        renderFrame: (i, t) => {
+          poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
+          stage.render(t / seconds);
+        },
+        onProgress: p => setProgress(p, started),
+        isCancelled: () => cancelExport,
+      };
       try {
-        const r = await exportVideo({
-          canvas, width: w, height: h, fps, seconds, sink,
-          renderFrame: (i, t) => {
-            poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
-            stage.render(t / seconds);
-          },
-          onProgress: p => setProgress(p, started),
-          isCancelled: () => cancelExport,
-        });
+        const r = fmt === 'pngseq' ? await exportPngSequence(job) : await exportVideo(job);
         if (!r) { await sink?.abort(); toast('Exportación cancelada'); return; }
-        rememberRenderRate(w * h * seconds * fps, performance.now() - started);
+        rememberRenderRate(fmt, w * h * seconds * fps, performance.now() - started);
         updateExportEstimate();
         // Streamed files are announced by the host ("saved", with "Mostrar en carpeta").
-        if (r.blob) download(r.blob, videoFileName(w, h));
+        if (r.blob) download(r.blob, animationFileName(fmt, w, h));
       } catch (e) {
         await sink?.abort().catch(() => {});
         throw e;
@@ -387,24 +397,37 @@ function setProgress(p, started) {
 const formatDuration = s => s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
 const formatBytes = b => b < 1024 ** 3 ? `${Math.max(1, Math.round(b / 1024 ** 2))} MB` : `${(b / 1024 ** 3).toFixed(1)} GB`;
 
-// Render speed of the last video export (output pixels per second), to predict the next one.
-const RATE_KEY = 'imageto3d.renderRate';
-function rememberRenderRate(pixels, ms) {
-  try { localStorage.setItem(RATE_KEY, String(pixels / (ms / 1000))); } catch { /* ignore */ }
+// Render speed of the last export of each kind (output pixels per second), to predict the next.
+const RATE_KEY = 'imageto3d.renderRate.';
+function rememberRenderRate(kind, pixels, ms) {
+  try { localStorage.setItem(RATE_KEY + kind, String(pixels / (ms / 1000))); } catch { /* ignore */ }
 }
 
-/** "≈ 45 MB · 180 fotogramas · unos 20 s" under the video options, plus the hardware check. */
+const FORMAT_NOTES = {
+  webm: 'Con el fondo «Transparente» el vídeo lleva canal alfa: navegadores, OBS, DaVinci Resolve, Shotcut, Kdenlive.',
+  pngseq: 'Una imagen PNG por fotograma, en un ZIP. Es la forma de llevar transparencia a Premiere, After Effects o DaVinci.',
+};
+
+/** Size / frames / time estimate and the hardware check, under the animation options. */
 async function updateExportEstimate() {
-  const el = $('#export-estimate');
+  const el = $('#export-estimate'), note = $('#format-note');
   if (!el) return;
+  const kind = state.format;
+  note.textContent = FORMAT_NOTES[kind] || '';
+  note.classList.remove('warn');
+  if (stage.transparent && kind === 'mp4') {
+    note.textContent = 'El MP4 no admite transparencia: el fondo saldrá negro. Para conservarla usa WebM o Secuencia PNG.';
+    note.classList.add('warn');
+  }
+  if (!ANIMATED[kind]) return;
   const [w, h] = exportDims(), fps = Number(state.fps), frames = Math.round(state.seconds * fps);
-  const parts = [`≈ ${formatBytes(estimateVideoBytes(w, h, fps, state.seconds))}`, `${frames} fotogramas`];
-  const rate = Number(localStorage.getItem(RATE_KEY));
+  const parts = [`≈ ${formatBytes(estimateBytes(kind, w, h, fps, state.seconds, stage.transparent))}`, `${frames} fotogramas`];
+  const rate = Number(localStorage.getItem(RATE_KEY + kind));
   if (rate > 0) parts.push(`unos ${formatDuration(w * h * frames / rate)} de render`);
   el.textContent = parts.join(' · ');
   el.classList.remove('warn');
-  const support = await checkVideoSupport(stage.renderer, w, h, fps);
-  if (state.format !== 'mp4') return;
+  const support = await checkVideoSupport(stage.renderer, kind, w, h, fps);
+  if (state.format !== kind) return;
   $('#btn-export').disabled = !support.ok;
   if (!support.ok) { el.textContent = support.reason; el.classList.add('warn'); }
 }
@@ -888,6 +911,7 @@ function initBackgrounds() {
       el.querySelectorAll('.on').forEach(x => x.classList.remove('on'));
       b.classList.add('on');
       stage.setBackground(bg.spec);
+      syncTransparency();
       save();
     };
     el.appendChild(b);
@@ -926,7 +950,10 @@ function syncSizeUI() {
 
 function syncExportOpts() {
   document.querySelectorAll('.export-opts').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(state.format); });
-  const label = { mp4: 'Exportar vídeo MP4', png: 'Exportar imagen PNG', glb: 'Exportar modelo GLB', stl: 'Exportar STL (impresión 3D)' };
+  const label = {
+    mp4: 'Exportar vídeo MP4', webm: 'Exportar vídeo WebM', pngseq: 'Exportar secuencia PNG (ZIP)',
+    png: 'Exportar imagen PNG', glb: 'Exportar modelo GLB', stl: 'Exportar STL (impresión 3D)',
+  };
   $('#btn-export').textContent = label[state.format];
   $('#btn-export').disabled = false;
   updateExportEstimate();
