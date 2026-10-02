@@ -3,7 +3,7 @@
 import { MATERIALS } from './materials.js';
 
 const BASE = {
-  anim: 'rotate-y', speed: 1, afterIntro: 'none',
+  anim: 'rotate-y', speed: 1, afterIntro: 'none', outro: 'none',
   material: 'logo', color: '#c8f55a', sideMode: 'logo',
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette',
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1, camMove: 'none', camAmount: 1,
@@ -26,7 +26,7 @@ const RAW = [
   { id: 'hologram', label: 'Holograma',
     set: { anim: 'tilt-spin', material: 'holo', lighting: 'neon', floor: 'grid', bg: 'indigo', bloom: 0.5, bloomTh: 0.7, camMove: 'sway' } },
   { id: 'epic', label: 'Intro épica',
-    set: { anim: 'intro-assemble', afterIntro: 'float', lighting: 'dramatic', floor: 'mirror', bg: 'vignette', bloom: 0.2, particles: true, camMove: 'push' } },
+    set: { anim: 'intro-assemble', afterIntro: 'float', outro: 'outro-disassemble', lighting: 'dramatic', floor: 'mirror', bg: 'vignette', bloom: 0.2, particles: true, camMove: 'push' } },
   { id: 'toy', label: 'Juguete',
     set: { anim: 'bounce', material: 'plastic', color: '#ff4d5e', lighting: 'soft', floor: 'shadow', bg: 'cream' } },
   { id: 'sunset', label: 'Atardecer',
@@ -38,7 +38,7 @@ const RAW = [
   { id: 'explosion', label: 'Explosión',
     set: { anim: 'explode', lighting: 'dramatic', floor: 'shadow', bg: 'vignette', bloom: 0.15 } },
   { id: 'cinema', label: 'Cine',
-    set: { anim: 'intro-spin', afterIntro: 'levitate', material: 'titanium', lighting: 'dramatic', floor: 'mirror', bg: 'black', particles: true, density: 0.6, camMove: 'crane', shine: true } },
+    set: { anim: 'intro-spin', afterIntro: 'levitate', outro: 'outro-dolly', material: 'titanium', lighting: 'dramatic', floor: 'mirror', bg: 'black', particles: true, density: 0.6, camMove: 'crane', shine: true } },
   { id: 'party', label: 'Fiesta',
     set: { anim: 'dance', material: 'rainbow', lighting: 'neon', floor: 'spot', bg: 'pink', bloom: 0.4, bloomTh: 0.7, particles: true, density: 1.5 } },
   { id: 'elegant', label: 'Elegante',

@@ -472,6 +472,66 @@ export const ANIMATIONS = [
     }) },
 ];
 
+// ── Outros (exits): the last part of a complete clip ──
+// Most are intros played backwards: an intro ends exactly at rest, so its reverse starts
+// there and joins the loop without a jump, and its easing turns into an accelerating exit.
+const REVERSED_INTROS = [
+  ['intro-pop', 'outro-shrink', 'Encoger'],
+  ['intro-spin', 'outro-spin', 'Salir girando'],
+  ['intro-zoom', 'outro-zoom', 'Zoom a cámara'],
+  ['intro-dolly', 'outro-dolly', 'Alejarse'],
+  ['intro-rise', 'outro-sink', 'Hundirse'],
+  ['intro-slide', 'outro-slide', 'Deslizar fuera'],
+  ['intro-tumble', 'outro-tumble', 'Volteretas fuera'],
+  ['intro-cardflip', 'outro-cardflip', 'Carta fuera'],
+  ['intro-extrude', 'outro-flatten', 'Aplanar'],
+  ['intro-stretch', 'outro-squeeze', 'Aplastar'],
+  ['intro-back-in', 'outro-back', 'Hacia el fondo'],
+  ['intro-flip-x', 'outro-flip-x', 'Voltear fuera'],
+  ['intro-lightspeed', 'outro-lightspeed', 'Velocidad luz'],
+  ['intro-roll', 'outro-roll', 'Rodar fuera'],
+  ['intro-jack', 'outro-jack', 'Sorpresa fuera'],
+  ['intro-swing', 'outro-swing', 'Bisagra fuera'],
+  ['intro-emerge', 'outro-submerge', 'Sumergirse'],
+  ['intro-print', 'outro-unprint', 'Desimprimir'],
+  ['intro-assemble', 'outro-disassemble', 'Desmontar'],
+  ['intro-typewriter', 'outro-backspace', 'Borrar'],
+  ['intro-split', 'outro-split', 'Separar'],
+  ['intro-spiral', 'outro-spiral', 'Espiral fuera'],
+  ['intro-unfold', 'outro-fold', 'Plegar'],
+  ['intro-iris', 'outro-iris', 'Cerrar iris'],
+  ['intro-neon', 'outro-neon', 'Apagar neón'],
+  ['intro-glitch', 'outro-glitch', 'Glitch fuera'],
+];
+for (const [from, id, label] of REVERSED_INTROS) {
+  const src = ANIMATIONS.find(a => a.id === from);
+  if (!src) continue;
+  ANIMATIONS.push({ id, label, kind: 'outro', duration: src.duration, pieces: src.pieces, tall: src.tall,
+    apply: ctx => src.apply({ ...ctx, q: 1 - ctx.q }) });
+}
+ANIMATIONS.push(
+  { id: 'outro-fall', label: 'Caer', kind: 'outro', duration: 1.2,
+    apply: ({ m, q }) => { const e = easeInCubic(q); m.position.y = -e * 7; m.rotation.z = e * 0.5; m.rotation.x = e * 0.4; } },
+  { id: 'outro-fly-up', label: 'Salir volando', kind: 'outro', duration: 1.2,
+    apply: ({ m, q }) => {
+      const e = q < 0.25 ? -Math.sin(Math.PI * q / 0.25) * 0.08 : easeInCubic((q - 0.25) / 0.75);   // crouch, then launch
+      m.position.y = e * 7;
+      m.scale.set(1 + (q < 0.25 ? 0.06 * Math.sin(Math.PI * q / 0.25) : 0), 1 - (q < 0.25 ? 0.08 * Math.sin(Math.PI * q / 0.25) : -0.15 * e), 1);
+    } },
+  { id: 'outro-explode', label: 'Explotar', kind: 'outro', duration: 1.4, pieces: true,
+    apply: ({ ps, q }) => {
+      const e = easeInCubic(q);
+      ps.forEach(piece => {
+        const u = piece.userData, h = u.home, len = Math.max(0.3, h.length());
+        piece.position.x += (h.x / len) * e * 6;
+        piece.position.y += (h.y / len) * e * 6 + (u.rand2 - 0.5) * e * 2;
+        piece.position.z += (u.rand - 0.2) * e * 8;
+        piece.rotation.set((u.rand - 0.5) * e * 8, (u.rand2 - 0.5) * e * 8, (u.rand - 0.5) * e * 4);
+        piece.scale.setScalar(Math.max(0.001, 1 - clamp01((q - 0.6) / 0.4)));
+      });
+    } },
+);
+
 export const INTRO_HOLD = 1.6;   // preview pause between intro replays
 
 export function getAnimation(id) {
@@ -506,7 +566,7 @@ export function resetPose(motion, pieces) {
 export function poseAt(anim, t, motion, pieces, once) {
   resetPose(motion, pieces);
   const size = pieces[0]?.parent?.userData.size || { x: 4, y: 2, z: 0.4 };
-  if (anim.kind === 'intro') {
+  if (anim.kind === 'intro' || anim.kind === 'outro') {
     const span = anim.duration + INTRO_HOLD;
     const local = once ? t : ((t % span) + span) % span;
     anim.apply({ m: motion, ps: pieces, q: clamp01(local / anim.duration), t, size, clip: fx.clip });
@@ -516,22 +576,51 @@ export function poseAt(anim, t, motion, pieces, once) {
   }
 }
 
-/**
- * An intro followed by a loop on a `clip`-second timeline (t in real seconds): the intro
- * plays at the user's speed and the loop fills the rest with a whole number of cycles, so
- * the clip ends exactly back at rest.
- */
-export function sequenceTiming(intro, after, clip, speed) {
-  const introSecs = intro.duration / speed;
-  const rest = Math.max(0, clip - introSecs);
-  const fit = rest > 0 ? fitLoop(after, rest, speed) : { speed, cycles: 0 };
-  return { introSecs, rest, fit };
+const smoothstep01 = x => { const c = clamp01(x); return c * c * (3 - 2 * c); };
+
+/** Pulls the current pose a fraction (1 - w) of the way back to rest (w = 1 leaves it). */
+function towardRest(w, motion, pieces) {
+  const blend = (o, home) => {
+    o.position.lerpVectors(home, o.position.clone(), w);
+    o.scale.set(1 + (o.scale.x - 1) * w, 1 + (o.scale.y - 1) * w, 1 + (o.scale.z - 1) * w);
+    const q = o.quaternion.clone();
+    o.quaternion.slerpQuaternions(q.clone().identity(), q, w);
+  };
+  blend(motion, motion.position.clone().set(0, 0, 0));
+  for (const p of pieces) blend(p, p.userData.home);
 }
 
-export function poseSequence(intro, after, t, clip, speed, motion, pieces) {
-  const { introSecs, fit } = sequenceTiming(intro, after, clip, speed);
-  if (t < introSecs) poseAt(intro, t * speed, motion, pieces, true);
-  else poseAt(after, (t - introSecs) * fit.speed, motion, pieces, true);
+/**
+ * The full clip as a timeline: [intro] → [loop] → [outro], each optional, on a
+ * `clip`-second clip (t in real seconds). Intro and outro play at the user's speed;
+ * the loop fills the middle with a whole number of cycles (or the logo holds still),
+ * so the outro always starts from rest and the joins never jump.
+ */
+export function timelineOf({ intro = null, loop = null, outro = null, clip, speed }) {
+  const introSecs = intro ? intro.duration / speed : 0;
+  const outroSecs = outro ? outro.duration / speed : 0;
+  const mid = Math.max(0, clip - introSecs - outroSecs);
+  const fit = loop && mid > 0 ? fitLoop(loop, mid, speed) : null;
+  return {
+    introSecs, mid, outroSecs, fit,
+    fits: introSecs + outroSecs <= clip + 1e-6,
+    pose(t, motion, pieces) {
+      if (intro && t < introSecs) return poseAt(intro, t * speed, motion, pieces, true);
+      if (t < introSecs + mid || !outro) {
+        if (!loop || !fit) return resetPose(motion, pieces);
+        poseAt(loop, (t - introSecs) * fit.speed, motion, pieces, true);
+        // Many loops don't start at rest (a float already tilted, a wave mid-swell). Where the
+        // loop meets an intro or an outro, ease it in from / out to rest so the join is smooth.
+        const ramp = Math.min(0.35, mid / 4), local = t - introSecs;
+        let w = 1;
+        if (intro) w = Math.min(w, smoothstep01(local / ramp));
+        if (outro) w = Math.min(w, smoothstep01((mid - local) / ramp));
+        if (w < 1) towardRest(w, motion, pieces);
+        return;
+      }
+      poseAt(outro, (t - introSecs - mid) * speed, motion, pieces, true);
+    },
+  };
 }
 
 /** A representative instant for a still (preset thumbnails). Loops may set `still`, the
