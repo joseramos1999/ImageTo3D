@@ -24,7 +24,7 @@ const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
   anim: 'rotate-y', animTab: 'preset', speed: 1,
-  lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none',
+  lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
@@ -197,6 +197,7 @@ function applySceneToEngine() {
   stage.setShine(state.shine, state.shineGain);
   stage.setParticles(state.particles, state.density);
   stage.cameraMove = state.camMove;
+  stage.cameraAmount = state.camAmount;
   stage.updateFloorHeight(!!getAnimation(state.anim).tall);
   applyMaterials();
 }
@@ -710,6 +711,7 @@ const ON_CHANGE = {
   bloomTh: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
   bloomRadius: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
   shineGain: () => stage.setShine(state.shine, state.shineGain),
+  camAmount: () => { stage.cameraAmount = state.camAmount; },
   density: () => stage.setParticles(state.particles, state.density, '#ffffff'),
   seconds: () => { updateLoopNote(); updateExportEstimate(); }, speed: updateLoopNote,
 };

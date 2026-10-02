@@ -33,6 +33,13 @@ export const CAMERA_MOVES = [
   { id: 'orbit', label: 'Órbita 360°' },
   { id: 'push', label: 'Acercar/alejar' },
   { id: 'crane', label: 'Grúa' },
+  { id: 'spiral', label: 'Espiral' },
+  { id: 'vertigo', label: 'Vértigo' },
+  { id: 'truck', label: 'Travelling' },
+  { id: 'handheld', label: 'Cámara en mano' },
+  { id: 'low-arc', label: 'Contrapicado' },
+  { id: 'top-down', label: 'Cenital' },
+  { id: 'push-arc', label: 'Arco y acercar' },
 ];
 
 export const BACKGROUNDS = [
@@ -537,19 +544,8 @@ export class Stage {
     const cam = this.camera, target = this.controls.target;
     const savedPos = cam.position.clone(), savedQuat = cam.quaternion.clone();
 
-    if (this.cameraMove !== 'none') {
-      const off = cam.position.clone().sub(target);
-      const sph = new THREE.Spherical().setFromVector3(off);
-      const w = TAU * cycle;
-      switch (this.cameraMove) {
-        case 'sway': sph.theta += Math.sin(w) * 0.4; break;
-        case 'orbit': sph.theta += w; break;
-        case 'push': sph.radius *= 1 - 0.22 * (0.5 - 0.5 * Math.cos(w)); break;
-        case 'crane': sph.phi = THREE.MathUtils.clamp(sph.phi - Math.sin(w) * 0.35, 0.2, Math.PI - 0.2); break;
-      }
-      cam.position.copy(target).add(new THREE.Vector3().setFromSpherical(sph));
-      cam.lookAt(target);
-    }
+    const savedFov = cam.fov;
+    if (this.cameraMove !== 'none') this.applyCameraMove(cycle);
 
     if (transparent || this.transparent) {
       // Straight to the canvas with alpha: the post-processing chain would flatten it.
@@ -569,5 +565,74 @@ export class Stage {
 
     cam.position.copy(savedPos);
     cam.quaternion.copy(savedQuat);
+    if (cam.fov !== savedFov) { cam.fov = savedFov; cam.updateProjectionMatrix(); }
+  }
+
+  /**
+   * Moves the camera for this instant on top of the user's own framing (undone after the
+   * frame). Every move is periodic in the cycle so loops close; `cameraAmount` scales them.
+   */
+  applyCameraMove(cycle) {
+    const cam = this.camera, target = this.controls.target.clone();
+    const sph = new THREE.Spherical().setFromVector3(cam.position.clone().sub(target));
+    const w = TAU * cycle, k = this.cameraAmount ?? 1;
+    const ease = 0.5 - 0.5 * Math.cos(w);            // 0 → 1 → 0 over the cycle
+    const clampPhi = p => THREE.MathUtils.clamp(p, 0.12, Math.PI - 0.12);
+    const look = target.clone();
+    switch (this.cameraMove) {
+      case 'sway': sph.theta += Math.sin(w) * 0.4 * k; break;
+      case 'orbit': sph.theta += w; break;
+      case 'push': sph.radius *= 1 - 0.22 * k * ease; break;
+      case 'crane': sph.phi = clampPhi(sph.phi - Math.sin(w) * 0.35 * k); break;
+      case 'spiral':
+        sph.theta += w;
+        sph.phi = clampPhi(sph.phi - Math.sin(w) * 0.3 * k);
+        sph.radius *= 1 - 0.12 * k * ease;
+        break;
+      case 'vertigo': {
+        // Dolly zoom: the lens widens while the camera closes in by just enough to keep the
+        // logo the same size, so only the space around it stretches.
+        const fov0 = THREE.MathUtils.degToRad(cam.fov);
+        const fov1 = THREE.MathUtils.clamp(fov0 * (1 + 0.9 * k * ease), 0.05, 2.6);
+        sph.radius *= Math.tan(fov0 / 2) / Math.tan(fov1 / 2);
+        cam.fov = THREE.MathUtils.radToDeg(fov1);
+        cam.updateProjectionMatrix();
+        break;
+      }
+      case 'truck': {
+        // Slide sideways; the aim follows at half the distance, for parallax.
+        const right = new THREE.Vector3().setFromSphericalCoords(1, Math.PI / 2, sph.theta + Math.PI / 2);
+        const shift = Math.sin(w) * sph.radius * 0.18 * k;
+        target.addScaledVector(right, shift);
+        look.addScaledVector(right, shift * 0.5);
+        break;
+      }
+      case 'handheld': {
+        // Several small incommensurate-looking sines (integer harmonics, so still periodic).
+        const n = (a, b, c) => (Math.sin(w * a + b) * 0.6 + Math.sin(w * c + b * 1.7) * 0.4);
+        sph.theta += n(3, 0.3, 7) * 0.012 * k;
+        sph.phi = clampPhi(sph.phi + n(4, 1.1, 9) * 0.01 * k);
+        sph.radius *= 1 + n(2, 2.3, 5) * 0.01 * k;
+        look.x += n(5, 0.7, 11) * 0.03 * k;
+        look.y += n(6, 1.9, 13) * 0.03 * k;
+        break;
+      }
+      case 'low-arc':
+        sph.phi = clampPhi(Math.PI / 2 + 0.28 * k);   // just below the logo, looking up
+        sph.theta += Math.sin(w) * 0.5 * k;
+        break;
+      case 'top-down': {
+        // From overhead down to the front at mid-cycle, then back up.
+        const top = Math.PI / 2 - (Math.PI / 2 - 0.2) * Math.min(1, k);
+        sph.phi = clampPhi(top + (Math.PI / 2 - 0.1 - top) * ease);
+        break;
+      }
+      case 'push-arc':
+        sph.theta += Math.sin(w) * 0.6 * k;
+        sph.radius *= 1 - 0.25 * k * ease;
+        break;
+    }
+    cam.position.copy(target).add(new THREE.Vector3().setFromSpherical(sph));
+    cam.lookAt(look);
   }
 }
