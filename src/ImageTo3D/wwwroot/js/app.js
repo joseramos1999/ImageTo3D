@@ -8,7 +8,7 @@ import { initMaskUI } from './mask-ui.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, parseProject, PROJECT_EXT } from './project.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
-import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, poseSequence, sequenceTiming } from './animations.js';
+import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, poseSequence, sequenceTiming, fx } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPngSequence, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
@@ -1090,6 +1090,7 @@ function initDragDrop() {
 
 function init() {
   initSliders();
+  fx.clip = (axis, value, keepAbove) => stage.setLogoClip(axis, value, keepAbove);
   maskUI = initMaskUI({ getSource: () => source, commit: op => { requestRetrace(op); markDirty(); } });
   initMaterials();
   initAnimations();

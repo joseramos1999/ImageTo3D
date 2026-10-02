@@ -156,6 +156,7 @@ export class Stage {
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = true;
+    this.renderer.localClippingEnabled = true;   // for reveal animations (sweep, emerge, print)
     this.renderer.shadowMap.type = THREE.PCFShadowMap;   // r18x: PCF is soft, `radius` controls the blur
 
     this.scene = new THREE.Scene();
@@ -256,6 +257,26 @@ export class Stage {
       this.logoSize.copy(group.userData.size);
     }
     this.updateFloorHeight();
+  }
+
+  /** See animations.js fx.clip: a world-space plane on the logo materials (null clears). */
+  setLogoClip(axis, value = 0, keepAbove = false) {
+    if (!this.logo) return;
+    if (!axis && !this.clipActive) return;
+    let planes = null;
+    if (axis) {
+      this.clipPlane ||= new THREE.Plane();
+      const s = this.root.scale.x, sign = keepAbove ? 1 : -1;
+      const n = new THREE.Vector3(axis === 'x' ? sign : 0, axis === 'y' ? sign : 0, 0);
+      this.clipPlane.set(n, -sign * value * s);
+      planes = [this.clipPlane];
+    }
+    this.clipActive = !!axis;
+    for (const mesh of this.logo.children) {
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (m.clippingPlanes !== planes) { m.clippingPlanes = planes; m.clipShadows = true; }
+      }
+    }
   }
 
   setUserScale(s) {

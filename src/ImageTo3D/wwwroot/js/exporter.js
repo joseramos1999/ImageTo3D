@@ -270,6 +270,7 @@ function restClone(logoGroup, userScale) {
   const clone = logoGroup.clone(true);
   clone.children.forEach(m => {
     m.position.copy(m.userData.home);
+    m.visible = true;
     m.rotation.set(0, 0, 0);
     m.scale.set(1, 1, 1);
   });
