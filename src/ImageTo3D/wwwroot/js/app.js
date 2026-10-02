@@ -11,7 +11,8 @@ import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
-import { exportVideo, exportPNG, exportGLB, exportSTL, download } from './exporter.js';
+import { exportVideo, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateVideoBytes, videoFileName } from './exporter.js';
+import { openSink } from './filesink.js';
 import { host } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
 
@@ -312,6 +313,20 @@ async function runExport() {
 
     const [w, h] = exportDims();
     const anim = getAnimation(state.anim);
+    let sink = null;
+    if (fmt === 'mp4') {
+      const fps = Number(state.fps);
+      const support = await checkVideoSupport(stage.renderer, w, h, fps);
+      if (!support.ok) { toast(support.reason, 'error'); return; }
+      if (host.isDesktop) {
+        // Where to save is asked first, then the video streams into that file as it renders.
+        sink = await openSink(videoFileName(w, h));
+        if (!sink) return;
+      } else if (estimateVideoBytes(w, h, fps, state.seconds) > 1.5 * 1024 ** 3) {
+        toast('Ese vídeo pasaría de 1,5 GB y en el navegador se monta entero en memoria. Acórtalo o usa la app de escritorio.', 'error');
+        return;
+      }
+    }
     exporting = true;
     const restore = stage.beginFixedSize(w, h);
     try {
@@ -331,18 +346,26 @@ async function runExport() {
       const fit = fitLoop(anim, seconds, state.speed);
       cancelExport = false;
       showProgress(`Renderizando vídeo ${w}×${h} · ${fps} fps…`);
-      const r = await exportVideo({
-        canvas, width: w, height: h, fps, seconds,
-        renderFrame: (i, t) => {
-          poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
-          stage.render(t / seconds);
-        },
-        onProgress: p => setProgress(p),
-        isCancelled: () => cancelExport,
-      });
-      hideProgress();
-      if (r) download(r.blob, r.filename);
-      else toast('Exportación cancelada');
+      const started = performance.now();
+      try {
+        const r = await exportVideo({
+          canvas, width: w, height: h, fps, seconds, sink,
+          renderFrame: (i, t) => {
+            poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
+            stage.render(t / seconds);
+          },
+          onProgress: p => setProgress(p, started),
+          isCancelled: () => cancelExport,
+        });
+        if (!r) { await sink?.abort(); toast('Exportación cancelada'); return; }
+        rememberRenderRate(w * h * seconds * fps, performance.now() - started);
+        updateExportEstimate();
+        // Streamed files are announced by the host ("saved", with "Mostrar en carpeta").
+        if (r.blob) download(r.blob, videoFileName(w, h));
+      } catch (e) {
+        await sink?.abort().catch(() => {});
+        throw e;
+      }
     } finally {
       restore();
       exporting = false;
@@ -356,9 +379,37 @@ async function runExport() {
 
 function showProgress(title) { $('#progress-title').textContent = title; setProgress(0); $('#progress').hidden = false; }
 function hideProgress() { $('#progress').hidden = true; }
-function setProgress(p) {
+function setProgress(p, started) {
   $('#progress-bar').style.width = (p * 100).toFixed(1) + '%';
-  $('#progress-text').textContent = Math.round(p * 100) + '%';
+  let text = Math.round(p * 100) + '%';
+  const elapsed = started ? (performance.now() - started) / 1000 : 0;
+  if (p > 0.03 && p < 1 && elapsed > 1) text += ` · quedan ${formatDuration(elapsed / p * (1 - p))}`;
+  $('#progress-text').textContent = text;
+}
+
+const formatDuration = s => s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
+const formatBytes = b => b < 1024 ** 3 ? `${Math.max(1, Math.round(b / 1024 ** 2))} MB` : `${(b / 1024 ** 3).toFixed(1)} GB`;
+
+// Render speed of the last video export (output pixels per second), to predict the next one.
+const RATE_KEY = 'imageto3d.renderRate';
+function rememberRenderRate(pixels, ms) {
+  try { localStorage.setItem(RATE_KEY, String(pixels / (ms / 1000))); } catch { /* ignore */ }
+}
+
+/** "≈ 45 MB · 180 fotogramas · unos 20 s" under the video options, plus the hardware check. */
+async function updateExportEstimate() {
+  const el = $('#export-estimate');
+  if (!el) return;
+  const [w, h] = exportDims(), fps = Number(state.fps), frames = Math.round(state.seconds * fps);
+  const parts = [`≈ ${formatBytes(estimateVideoBytes(w, h, fps, state.seconds))}`, `${frames} fotogramas`];
+  const rate = Number(localStorage.getItem(RATE_KEY));
+  if (rate > 0) parts.push(`unos ${formatDuration(w * h * frames / rate)} de render`);
+  el.textContent = parts.join(' · ');
+  el.classList.remove('warn');
+  const support = await checkVideoSupport(stage.renderer, w, h, fps);
+  if (state.format !== 'mp4') return;
+  $('#btn-export').disabled = !support.ok;
+  if (!support.ok) { el.textContent = support.reason; el.classList.add('warn'); }
 }
 
 // ───────── toasts ─────────
@@ -634,7 +685,7 @@ const ON_CHANGE = {
   bloom: () => stage.setBloom(state.bloom, state.bloomTh),
   bloomTh: () => stage.setBloom(state.bloom, state.bloomTh),
   density: () => stage.setParticles(state.particles, state.density, '#ffffff'),
-  seconds: updateLoopNote, speed: updateLoopNote,
+  seconds: () => { updateLoopNote(); updateExportEstimate(); }, speed: updateLoopNote,
 };
 
 const sliderSync = {};   // key → re-reads state into the slider
@@ -850,6 +901,8 @@ function syncExportOpts() {
   document.querySelectorAll('.export-opts').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(state.format); });
   const label = { mp4: 'Exportar vídeo MP4', png: 'Exportar imagen PNG', glb: 'Exportar modelo GLB', stl: 'Exportar STL (impresión 3D)' };
   $('#btn-export').textContent = label[state.format];
+  $('#btn-export').disabled = false;
+  updateExportEstimate();
 }
 
 function updateLoopNote() {
@@ -891,9 +944,9 @@ function init() {
   chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; camClock = 0; });
   segmented('#side-mode', 'sideMode', () => { applyMaterials(); syncColorRows(); });
   segmented('#format', 'format', syncExportOpts);
-  segmented('#res', 'res');
-  segmented('#aspect', 'aspect', () => { layoutViewport(); frameCamera(); });
-  segmented('#fps', 'fps');
+  segmented('#res', 'res', updateExportEstimate);
+  segmented('#aspect', 'aspect', () => { layoutViewport(); frameCamera(); updateExportEstimate(); });
+  segmented('#fps', 'fps', updateExportEstimate);
 
   $('#color').value = state.color;
   $('#color').addEventListener('input', e => { state.color = e.target.value; applyMaterials(); save(); });

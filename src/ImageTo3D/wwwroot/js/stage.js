@@ -213,6 +213,10 @@ export class Stage {
   /** Temporarily renders at an exact pixel size (exports). Returns a restore fn. */
   beginFixedSize(w, h) {
     const prevRatio = this.renderer.getPixelRatio(), pw = this.viewW, ph = this.viewH;
+    // Above ~4 MP the 4x multisampled half-float targets cost ~265 MB each of GPU memory;
+    // at that resolution 2x antialiasing looks the same and halves it.
+    const samples = w * h > 4e6 ? 2 : 4;
+    this.setSamples(samples);
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(1);
@@ -220,9 +224,18 @@ export class Stage {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     return () => {
+      this.setSamples(4);
       this.renderer.setPixelRatio(prevRatio);
       this.setSize(pw, ph);
     };
+  }
+
+  setSamples(n) {
+    for (const rt of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+      if (rt.samples === n) continue;
+      rt.samples = n;
+      rt.dispose();   // reallocated with the new sample count on next use
+    }
   }
 
   setLogo(group) {

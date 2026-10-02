@@ -18,6 +18,16 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // A window closed mid-export leaves no half-written video behind.
+        Closed += (_, _) =>
+        {
+            foreach (var (stream, path) in _sinks.Values)
+            {
+                stream.Dispose();
+                try { File.Delete(path); } catch (IOException) { /* best effort */ }
+            }
+            _sinks.Clear();
+        };
         var args = Environment.GetCommandLineArgs();
         if (args.Length > 1 && File.Exists(args[1]) &&
             string.Equals(Path.GetExtension(args[1]), ".i3d", StringComparison.OrdinalIgnoreCase))
@@ -177,6 +187,12 @@ public partial class MainWindow : Window
                 case "title":
                     Title = msg.GetProperty("text").GetString() ?? Title;
                     break;
+                case "file-open":
+                case "file-write":
+                case "file-close":
+                case "file-abort":
+                    OnFileMessage(msg);
+                    break;
                 case "ready":
                     _readyTimer.Stop();
                     Splash.Visibility = Visibility.Collapsed;
@@ -190,6 +206,90 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Debug.WriteLine($"Bad web message: {ex.Message}");
+        }
+    }
+
+    // ── Streamed exports ──
+    // Long videos are written to disk while they encode instead of being assembled in
+    // memory: the engine asks for a file (native "Save as" up front), sends base64 chunks
+    // with their byte offset (the MP4 header is patched at the end), then closes it.
+    private readonly Dictionary<string, (FileStream Stream, string Path)> _sinks = new();
+
+    private void OnFileMessage(JsonElement msg)
+    {
+        var type = msg.GetProperty("type").GetString();
+        var id = msg.GetProperty("id").GetString() ?? "";
+        try
+        {
+            switch (type)
+            {
+                case "file-open":
+                    var name = msg.GetProperty("name").GetString() ?? "export";
+                    // Deferred: a modal dialog inside the WebView2 event handler can re-enter it.
+                    Dispatcher.BeginInvoke(() => OpenSink(id, name));
+                    break;
+                case "file-write":
+                    var sink = _sinks[id];
+                    var bytes = Convert.FromBase64String(msg.GetProperty("data").GetString() ?? "");
+                    sink.Stream.Seek(msg.GetProperty("pos").GetInt64(), SeekOrigin.Begin);
+                    sink.Stream.Write(bytes, 0, bytes.Length);
+                    Post(new { type = "file-ack", id });
+                    break;
+                case "file-close":
+                    if (_sinks.Remove(id, out var done))
+                    {
+                        done.Stream.Dispose();
+                        Post(new { type = "file-closed", id });
+                        Post(new { type = "saved", path = done.Path });
+                    }
+                    break;
+                case "file-abort":
+                    if (_sinks.Remove(id, out var aborted))
+                    {
+                        aborted.Stream.Dispose();
+                        try { File.Delete(aborted.Path); } catch (IOException) { /* best effort */ }
+                    }
+                    Post(new { type = "file-closed", id });
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Disk full, file locked...: the engine stops the export and tells the user.
+            if (_sinks.Remove(id, out var broken))
+            {
+                broken.Stream.Dispose();
+                try { File.Delete(broken.Path); } catch (IOException) { /* best effort */ }
+            }
+            Post(new { type = "file-error", id, message = ex.Message });
+        }
+    }
+
+    private void OpenSink(string id, string suggested)
+    {
+        var ext = Path.GetExtension(suggested).TrimStart('.').ToLowerInvariant();
+        var dlg = new SaveFileDialog
+        {
+            FileName = suggested,
+            InitialDirectory = DefaultFolderFor(ext),
+            Filter = FilterFor(ext),
+            AddExtension = true,
+            OverwritePrompt = true,
+        };
+        if (dlg.ShowDialog(this) != true)
+        {
+            Post(new { type = "file-cancelled", id });
+            return;
+        }
+        try
+        {
+            var fs = new FileStream(dlg.FileName, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 20);
+            _sinks[id] = (fs, dlg.FileName);
+            Post(new { type = "file-opened", id, path = dlg.FileName });
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "file-error", id, message = ex.Message });
         }
     }
 
