@@ -312,3 +312,20 @@ input[type=color] {
 #format.format-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
 #format.format-grid button { padding: 6px 4px; }
 .viewport.transparent { background: repeating-conic-gradient(#2a2a33 0 25%, #1c1c23 0 50%) 0 0 / 18px 18px; }
+
+/* ── light direction pad ── */
+.hint-inline { font-size: 10.5px; color: #5d5d6b; margin-left: 4px; }
+.light-pad {
+  position: relative; height: 92px; border-radius: 10px; border: 1px solid var(--line); cursor: crosshair;
+  background: radial-gradient(circle at 50% 55%, #23232d 0, #15151b 70%); touch-action: none; outline: none;
+}
+.light-pad:focus-visible { border-color: var(--accent); }
+.light-axis { position: absolute; background: #2a2a35; }
+.light-axis.h { left: 8px; right: 8px; top: 50%; height: 1px; }
+.light-axis.v { top: 8px; bottom: 8px; left: 50%; width: 1px; }
+.light-dot {
+  position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  background: radial-gradient(circle, #fffbe6 0 35%, #ffd76a 60%, rgba(255,215,106,0) 72%);
+  box-shadow: 0 0 14px rgba(255, 220, 120, .65);
+}
+.light-read { position: absolute; right: 8px; bottom: 5px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }

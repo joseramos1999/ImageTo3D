@@ -6,14 +6,15 @@ const BASE = {
   anim: 'rotate-y', speed: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo',
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette',
-  bloom: 0, bloomTh: 0.85, particles: false, density: 1, camMove: 'none',
+  bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1, camMove: 'none',
+  lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
 };
 
 const RAW = [
   { id: 'gold-lux', label: 'Oro de lujo',
-    set: { anim: 'turntable', material: 'gold', lighting: 'dramatic', floor: 'mirror', bg: 'black', bloom: 0.25, bloomTh: 0.8, particles: true, density: 0.8 } },
+    set: { anim: 'turntable', material: 'gold', lighting: 'dramatic', floor: 'mirror', bg: 'black', bloom: 0.25, bloomTh: 0.8, particles: true, density: 0.8, shine: true } },
   { id: 'chrome-y2k', label: 'Cromo Y2K',
-    set: { anim: 'zoom-spin', material: 'chrome', lightGain: 1.1, floor: 'grid', bg: 'indigo', bloom: 0.3, bloomTh: 0.75 } },
+    set: { anim: 'zoom-spin', material: 'chrome', lightGain: 1.1, floor: 'grid', bg: 'indigo', bloom: 0.3, bloomTh: 0.75, shine: true } },
   { id: 'neon-night', label: 'Neón nocturno',
     set: { anim: 'float', material: 'neon', color: '#ff2fa8', lighting: 'neon', floor: 'mirror', bg: 'black', bloom: 0.55, bloomTh: 0.75 } },
   { id: 'corporate', label: 'Corporativo',
@@ -37,11 +38,11 @@ const RAW = [
   { id: 'explosion', label: 'Explosión',
     set: { anim: 'explode', lighting: 'dramatic', floor: 'shadow', bg: 'vignette', bloom: 0.15 } },
   { id: 'cinema', label: 'Cine',
-    set: { anim: 'intro-spin', material: 'titanium', lighting: 'dramatic', floor: 'mirror', bg: 'black', particles: true, density: 0.6, camMove: 'crane' } },
+    set: { anim: 'intro-spin', material: 'titanium', lighting: 'dramatic', floor: 'mirror', bg: 'black', particles: true, density: 0.6, camMove: 'crane', shine: true } },
   { id: 'party', label: 'Fiesta',
     set: { anim: 'dance', material: 'rainbow', lighting: 'neon', floor: 'spot', bg: 'pink', bloom: 0.4, bloomTh: 0.7, particles: true, density: 1.5 } },
   { id: 'elegant', label: 'Elegante',
-    set: { anim: 'flip-pause', material: 'obsidian', floor: 'mirror', bg: 'white' } },
+    set: { anim: 'flip-pause', material: 'obsidian', floor: 'mirror', bg: 'white', shine: true, shineGain: 0.7 } },
 ];
 
 export const PRESETS = RAW.map(p => ({ ...p, set: { ...BASE, ...p.set } }));

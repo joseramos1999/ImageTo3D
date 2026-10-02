@@ -25,7 +25,8 @@ const DEFAULTS = {
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
   anim: 'rotate-y', animTab: 'preset', speed: 1,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none',
-  bloom: 0, bloomTh: 0.85, particles: false, density: 1,
+  bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
+  lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
 };
 const STORE_KEY = 'imageto3d.settings.v1';
@@ -191,7 +192,9 @@ function applySceneToEngine() {
   stage.setBackground((BACKGROUNDS.find(b => b.id === state.bg) || BACKGROUNDS[0]).spec);
   syncTransparency();
   stage.setFloor(state.floor);
-  stage.setBloom(state.bloom, state.bloomTh);
+  stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius);
+  stage.setLightAngle(state.lightAz, state.lightEl);
+  stage.setShine(state.shine, state.shineGain);
   stage.setParticles(state.particles, state.density);
   stage.cameraMove = state.camMove;
   stage.updateFloorHeight(!!getAnimation(state.anim).tall);
@@ -210,6 +213,7 @@ function applyMaterials() {
   materials = createMaterials(state.material, {
     logoMap: source?.colorTex, color: state.color, sideMode: state.sideMode, sideColor: state.sideColor,
   });
+  new Set(materials).forEach(m => stage.decorateMaterial(m));
   logo.children.forEach(m => { m.material = materials; });
   if (old.length) disposeMaterials(old);
 }
@@ -702,8 +706,10 @@ const ON_CHANGE = {
   depth: rebuildMeshes, bevel: rebuildMeshes, smooth: rebuildOutlines,
   scale: () => { stage.setUserScale(state.scale); stage.fitShadow(); },
   lightGain: () => stage.setLighting(state.lighting, state.lightGain),
-  bloom: () => stage.setBloom(state.bloom, state.bloomTh),
-  bloomTh: () => stage.setBloom(state.bloom, state.bloomTh),
+  bloom: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
+  bloomTh: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
+  bloomRadius: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
+  shineGain: () => stage.setShine(state.shine, state.shineGain),
   density: () => stage.setParticles(state.particles, state.density, '#ffffff'),
   seconds: () => { updateLoopNote(); updateExportEstimate(); }, speed: updateLoopNote,
 };
@@ -851,6 +857,8 @@ function syncSceneUI() {
   Object.values(sliderSync).forEach(fn => fn());
   $('#color').value = state.color;
   $('#particles').checked = state.particles;
+  $('#shine').checked = state.shine;
+  syncLightPad();
   syncColorRows();
   updateLoopNote();
 }
@@ -896,6 +904,49 @@ async function renderThumbs() {
     const img = document.querySelector(`#animations .preset[data-id="${p.id}"] .thumb`);
     if (img) img.innerHTML = `<img src="${thumbs.get(p.id)}" alt="">`;
   }
+}
+
+// Light direction pad: horizontal = azimuth (−180°…180°), vertical = elevation (−40°…70°).
+const AZ = [-180, 180], EL = [-40, 70];
+
+function initLightPad() {
+  const pad = $('#light-pad');
+  const setFrom = e => {
+    const r = pad.getBoundingClientRect();
+    const u = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const v = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    applyLight(AZ[0] + u * (AZ[1] - AZ[0]), EL[1] - v * (EL[1] - EL[0]));
+  };
+  let dragging = false;
+  pad.addEventListener('pointerdown', e => { dragging = true; pad.setPointerCapture(e.pointerId); setFrom(e); });
+  pad.addEventListener('pointermove', e => { if (dragging) setFrom(e); });
+  pad.addEventListener('pointerup', () => { dragging = false; });
+  pad.addEventListener('dblclick', () => applyLight(0, 0));
+  pad.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 15 : 5;
+    const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+    if (!moves[e.key]) return;
+    e.preventDefault();
+    applyLight(state.lightAz + moves[e.key][0], state.lightEl + moves[e.key][1]);
+  });
+  syncLightPad();
+}
+
+function applyLight(az, el) {
+  state.lightAz = Math.round(Math.max(AZ[0], Math.min(AZ[1], az)));
+  state.lightEl = Math.round(Math.max(EL[0], Math.min(EL[1], el)));
+  stage.setLightAngle(state.lightAz, state.lightEl);
+  syncLightPad();
+  save();
+}
+
+function syncLightPad() {
+  const u = (state.lightAz - AZ[0]) / (AZ[1] - AZ[0]), v = (EL[1] - state.lightEl) / (EL[1] - EL[0]);
+  const dot = $('#light-dot');
+  dot.style.left = (u * 100) + '%';
+  dot.style.top = (v * 100) + '%';
+  $('#light-read').textContent = `${state.lightAz}° · ${state.lightEl >= 0 ? '+' : ''}${state.lightEl}°`;
+  $('#light-pad').setAttribute('aria-valuetext', `giro ${state.lightAz} grados, altura ${state.lightEl} grados`);
 }
 
 function initBackgrounds() {
@@ -1007,6 +1058,9 @@ function init() {
   $('#side-color').addEventListener('input', e => { state.sideColor = e.target.value; applyMaterials(); save(); });
   $('#particles').checked = state.particles;
   $('#particles').addEventListener('change', e => { state.particles = e.target.checked; stage.setParticles(state.particles, state.density); save(); });
+  $('#shine').checked = state.shine;
+  $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
+  initLightPad();
 
   const fileInput = $('#file');
   $('#btn-open').onclick = () => fileInput.click();

@@ -186,6 +186,7 @@ export class Stage {
     this.lightingId = 'studio';
     this.lightGain = 1;
     this.bgSpec = BACKGROUNDS[0].spec;
+    this.shineUniforms = { uShinePos: { value: 0 }, uShineWidth: { value: 0.35 }, uShineStrength: { value: 0 } };
     this.particles = null;
     this.setLighting('studio', 1);
     this.setBackground(this.bgSpec);
@@ -421,12 +422,65 @@ export class Stage {
   }
 
   // ── Bloom ──
-  setBloom(strength, threshold = 0.85) {
+  setBloom(strength, threshold = 0.85, radius = 0.35) {
     this.bloom.strength = strength;
     this.bloom.threshold = threshold;
-    this.bloom.radius = 0.35;
+    this.bloom.radius = radius;
     this.bloom.enabled = strength > 0.001;
   }
+
+  /**
+   * Turns the whole light rig (and the reflections) around the logo: azimuth spins it,
+   * elevation raises or lowers it, in degrees. Every lighting preset keeps its character
+   * and only changes where its highlights fall.
+   */
+  setLightAngle(azimuthDeg = 0, elevationDeg = 0) {
+    const az = THREE.MathUtils.degToRad(azimuthDeg), el = THREE.MathUtils.degToRad(-elevationDeg);
+    this.lights.rotation.set(el, az, 0, 'YXZ');
+    this.lights.updateMatrixWorld(true);
+    this.scene.environmentRotation.set(el, az, 0, 'YXZ');
+  }
+
+  /**
+   * "Destello": a bright diagonal band that sweeps across the logo once per cycle, then
+   * rests, so loops still close seamlessly. It is added in the logo materials' shaders
+   * (see decorateMaterial), so it reads the same on metal, plastic or the logo's colours.
+   */
+  setShine(on, gain = 1) {
+    this.shineOn = on;
+    this.shineGain = gain;
+    if (!on) this.shineUniforms.uShineStrength.value = 0;
+  }
+
+  updateShine(cycle) {
+    const u = this.shineUniforms;
+    if (!this.shineOn) { u.uShineStrength.value = 0; return; }
+    const s = this.root.scale.x;
+    const half = (Math.abs(this.logoSize.x) + Math.abs(this.logoSize.y) * 0.35) * s * 0.5 + 0.8;
+    const q = Math.min(1, cycle / 0.45);   // sweep during the first 45 % of the cycle, then rest
+    u.uShinePos.value = -half + 2 * half * (q * q * (3 - 2 * q));
+    u.uShineWidth.value = 0.35 * s;
+    u.uShineStrength.value = 1.6 * this.shineGain * Math.sin(Math.PI * q);
+  }
+
+  /** Adds the shine band to a logo material (uniforms shared, so no recompiles per frame). */
+  decorateMaterial(material) {
+    const uniforms = this.shineUniforms;
+    material.onBeforeCompile = shader => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vShineWorld;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvShineWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vShineWorld;\nuniform float uShinePos, uShineWidth, uShineStrength;')
+        .replace('#include <opaque_fragment>',
+          'float shineBand = 1.0 - smoothstep(0.0, uShineWidth, abs(dot(vShineWorld.xy, normalize(vec2(1.0, 0.35))) - uShinePos));\n' +
+          'outgoingLight += vec3(shineBand * shineBand * uShineStrength);\n#include <opaque_fragment>');
+    };
+    material.customProgramCacheKey = () => 'shine';
+    material.needsUpdate = true;
+  }
+
 
   // ── Particles (seamless: positions are periodic in the camera cycle) ──
   setParticles(on, density = 1, color = '#ffffff') {
@@ -479,6 +533,7 @@ export class Stage {
    */
   render(cycle = 0, { transparent = false } = {}) {
     this.updateParticles(cycle);
+    this.updateShine(cycle);
     const cam = this.camera, target = this.controls.target;
     const savedPos = cam.position.clone(), savedQuat = cam.quaternion.clone();
 
