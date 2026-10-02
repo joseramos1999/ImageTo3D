@@ -251,13 +251,14 @@ export class Stage {
   }
 
   /** Places the camera so the logo fills the frame comfortably. */
-  frame() {
+  frame(round = false) {
     const s = this.root.scale.x, sz = this.logoSize;
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
     const margin = 1.3;
-    const dv = (sz.y * s / 2 * margin) / Math.tan(vfov / 2);
-    const dh = (sz.x * s / 2 * margin) / Math.tan(hfov / 2);
+    const d0 = Math.hypot(sz.x, sz.y), fw = round ? d0 : sz.x, fh = round ? d0 : sz.y;   // round: frame the swept circle
+    const dv = (fh * s / 2 * margin) / Math.tan(vfov / 2);
+    const dh = (fw * s / 2 * margin) / Math.tan(hfov / 2);
     const d = Math.max(dv, dh, 4) + sz.z * s / 2;
     this.camera.position.set(0, d * 0.1, d);
     this.controls.target.set(0, 0, 0);
@@ -338,6 +339,7 @@ export class Stage {
 
   // ── Background ──
   setBackground(spec) {
+    if (spec === this.bgSpec && this.scene.background) return;
     this.bgSpec = spec;
     if (this.bgTexture) { this.bgTexture.dispose(); this.bgTexture = null; }
     if (spec.type === 'solid') {
@@ -351,6 +353,7 @@ export class Stage {
 
   // ── Floors ──
   setFloor(id) {
+    if (id === this.floorId && (this.floorGroup.children.length || id === 'none')) return;
     this.floorId = id;
     this.floorGroup.traverse(o => {
       if (o.geometry) o.geometry.dispose();
@@ -403,12 +406,14 @@ export class Stage {
   setBloom(strength, threshold = 0.85) {
     this.bloom.strength = strength;
     this.bloom.threshold = threshold;
-    this.bloom.radius = 0.5;
+    this.bloom.radius = 0.35;
     this.bloom.enabled = strength > 0.001;
   }
 
   // ── Particles (seamless: positions are periodic in the camera cycle) ──
   setParticles(on, density = 1, color = '#ffffff') {
+    if (on === !!this.particles && (!on || density === this.particleDensity)) return;
+    this.particleDensity = density;
     if (this.particles) {
       this.scene.remove(this.particles);
       this.particles.geometry.dispose();

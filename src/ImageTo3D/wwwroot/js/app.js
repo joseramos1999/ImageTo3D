@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { inkField, marchingSquares, buildOutlines } from './trace.js';
 import { shapesFromOutlines, buildLogoGroup, buildColorCanvas } from './geometry.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
-import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose } from './animations.js';
+import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
+import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPNG, exportGLB, exportSTL, download } from './exporter.js';
 import { host } from './host.js';
@@ -15,7 +16,7 @@ const $ = sel => document.querySelector(sel);
 const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
-  anim: 'rotate-y', animTab: 'loop', speed: 1,
+  anim: 'rotate-y', animTab: 'preset', speed: 1,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none',
   bloom: 0, bloomTh: 0.85, particles: false, density: 1,
   format: 'mp4', res: '1080', aspect: '16:9', fps: '30', seconds: 6, transparent: false, stlWidth: 100,
@@ -74,6 +75,19 @@ function rebuildMeshes() {
   stage.setLogo(logo);
   stage.updateFloorHeight(!!getAnimation(state.anim).tall);
   if (old) old.traverse(o => o.geometry?.dispose());
+  invalidateThumbs();
+}
+
+/** Pushes every scene setting in `state` to the engine (used by presets and on start-up). */
+function applySceneToEngine() {
+  stage.setLighting(state.lighting, state.lightGain);
+  stage.setBackground((BACKGROUNDS.find(b => b.id === state.bg) || BACKGROUNDS[0]).spec);
+  stage.setFloor(state.floor);
+  stage.setBloom(state.bloom, state.bloomTh);
+  stage.setParticles(state.particles, state.density);
+  stage.cameraMove = state.camMove;
+  stage.updateFloorHeight(!!getAnimation(state.anim).tall);
+  applyMaterials();
 }
 
 function applyMaterials() {
@@ -265,6 +279,8 @@ const ON_CHANGE = {
   seconds: updateLoopNote, speed: updateLoopNote,
 };
 
+const sliderSync = {};   // key → re-reads state into the slider
+
 function initSliders() {
   document.querySelectorAll('.slider').forEach(el => {
     const key = el.dataset.key, fmt = FORMAT[el.dataset.fmt] || (v => String(v));
@@ -276,8 +292,8 @@ function initSliders() {
       input.style.setProperty('--p', p + '%');
       out.textContent = fmt(input.value);
     };
-    input.value = state[key];
-    paint();
+    sliderSync[key] = () => { input.value = state[key]; paint(); };
+    sliderSync[key]();
     let pending = 0;
     input.addEventListener('input', () => {
       state[key] = Number(input.value);
@@ -296,6 +312,7 @@ function chips(container, items, key, onPick, render = it => it.label) {
   items.forEach(it => {
     const b = document.createElement('button');
     b.className = 'chip' + (state[key] === it.id ? ' on' : '');
+    b.dataset.id = it.id;
     b.innerHTML = render(it);
     b.onclick = () => {
       state[key] = it.id;
@@ -321,6 +338,7 @@ function initMaterials() {
   MATERIALS.forEach(m => {
     const b = document.createElement('div');
     b.className = 'swatch' + (state.material === m.id ? ' on' : '');
+    b.dataset.id = m.id;
     b.innerHTML = `<i style="background:${m.swatch}"></i>${m.label}`;
     b.onclick = () => {
       state.material = m.id;
@@ -341,14 +359,110 @@ function syncColorRows() {
   $('#side-color').hidden = state.sideMode !== 'custom';
 }
 
-function initAnimations() {
-  const render = () => chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
+function renderAnimationList() {
+  const el = $('#animations');
+  el.classList.toggle('presets', state.animTab === 'preset');
+  if (state.animTab === 'preset') { renderPresets(); return; }
+  chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
     animClock = 0;
+    if (a.round) stage.frame(true);
     stage.updateFloorHeight(!!a.tall);
     updateLoopNote();
+  }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
+}
+
+function initAnimations() {
+  segmented('#anim-tabs', 'animTab', renderAnimationList);
+  renderAnimationList();
+}
+
+// ───────── presets ("Predeterminadas") ─────────
+const thumbs = new Map();   // preset id → data URL rendered with the current logo
+let thumbsJob = 0;
+
+function renderPresets() {
+  const el = $('#animations');
+  el.innerHTML = '';
+  PRESETS.forEach(p => {
+    const card = document.createElement('button');
+    card.className = 'preset' + (matchesPreset(p, state) ? ' on' : '');
+    card.dataset.id = p.id;
+    card.innerHTML = `<span class="thumb">${thumbs.has(p.id) ? `<img src="${thumbs.get(p.id)}" alt="">` : ''}</span><span class="name">${p.label}</span>`;
+    card.onclick = () => applyPreset(p);
+    el.appendChild(card);
   });
-  segmented('#anim-tabs', 'animTab', render);
-  render();
+  if (thumbs.size < PRESETS.length) renderThumbs();
+}
+
+function applyPreset(p) {
+  Object.assign(state, p.set);
+  animClock = 0;
+  camClock = 0;
+  applySceneToEngine();
+  syncSceneUI();
+  save();
+}
+
+/** Re-reads `state` into every scene control after many keys changed at once. */
+function syncSceneUI() {
+  const mark = (sel, value) => document.querySelectorAll(sel).forEach(e => e.classList.toggle('on', e.dataset.id === value));
+  mark('#materials .swatch', state.material);
+  mark('#lighting .chip', state.lighting);
+  mark('#floors .chip', state.floor);
+  mark('#cameras .chip', state.camMove);
+  mark('#backgrounds .bg', state.bg);
+  if (state.animTab === 'preset') document.querySelectorAll('#animations .preset').forEach(card => {
+    card.classList.toggle('on', matchesPreset(PRESETS.find(p => p.id === card.dataset.id), state));
+  });
+  else renderAnimationList();
+  Object.values(sliderSync).forEach(fn => fn());
+  $('#color').value = state.color;
+  $('#particles').checked = state.particles;
+  syncColorRows();
+  updateLoopNote();
+}
+
+function invalidateThumbs() {
+  thumbs.clear();
+  thumbsJob++;
+  if (state.animTab === 'preset') renderPresets();
+}
+
+/**
+ * Renders each preset with the user's own logo. One preset per task: the scene is
+ * switched, drawn small, read back and switched back within the same task, so the
+ * live viewport never shows the intermediate state.
+ */
+async function renderThumbs() {
+  const job = ++thumbsJob;
+  for (const p of PRESETS) {
+    await new Promise(r => setTimeout(r, 0));
+    if (job !== thumbsJob || !logo) return;
+    if (thumbs.has(p.id) || exporting) continue;
+
+    const saved = { ...state };
+    const cam = stage.camera.position.clone(), target = stage.controls.target.clone();
+    Object.assign(state, p.set);
+    applySceneToEngine();
+    const restore = stage.beginFixedSize(320, 180);
+    stage.frame();
+    const anim = getAnimation(state.anim);
+    poseAt(anim, stillTime(anim), stage.motion, logo.children, true);
+    stage.render(0.1);
+    thumbs.set(p.id, canvas.toDataURL('image/jpeg', 0.82));
+    restore();
+
+    Object.assign(state, saved);
+    applySceneToEngine();
+    stage.camera.position.copy(cam);
+    stage.controls.target.copy(target);
+    stage.controls.update();
+    poseAt(getAnimation(state.anim), animClock, stage.motion, logo.children, false);
+    stage.render((camClock % state.seconds) / state.seconds);
+
+    const img = document.querySelector(`#animations .preset[data-id="${p.id}"] .thumb`);
+    if (img) img.innerHTML = `<img src="${thumbs.get(p.id)}" alt="">`;
+  }
 }
 
 function initBackgrounds() {
@@ -356,6 +470,7 @@ function initBackgrounds() {
   BACKGROUNDS.forEach(bg => {
     const b = document.createElement('div');
     b.className = 'bg' + (state.bg === bg.id ? ' on' : '');
+    b.dataset.id = bg.id;
     b.style.background = bg.css;
     b.title = bg.id;
     b.onclick = () => {
@@ -443,13 +558,8 @@ function init() {
   setTimeout(() => { $('.hint').style.opacity = 0; }, 6000);
   initDragDrop();
 
-  stage.setLighting(state.lighting, state.lightGain);
-  stage.setBackground((BACKGROUNDS.find(b => b.id === state.bg) || BACKGROUNDS[0]).spec);
-  stage.setFloor(state.floor);
-  stage.setBloom(state.bloom, state.bloomTh);
-  stage.setParticles(state.particles, state.density);
-  stage.cameraMove = state.camMove;
   stage.setUserScale(state.scale);
+  applySceneToEngine();
   syncColorRows();
   syncExportOpts();
   updateLoopNote();
