@@ -8,7 +8,7 @@ import { initMaskUI } from './mask-ui.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, parseProject, PROJECT_EXT } from './project.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
-import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime } from './animations.js';
+import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, poseSequence, sequenceTiming } from './animations.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPngSequence, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
@@ -23,7 +23,7 @@ const $ = sel => document.querySelector(sel);
 const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
-  anim: 'rotate-y', animTab: 'preset', speed: 1,
+  anim: 'rotate-y', animTab: 'preset', speed: 1, afterIntro: 'none',
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
@@ -181,7 +181,7 @@ function rebuildMeshes() {
   logo = buildLogoGroup(source.shapeSet, { depth: state.depth, bevel: state.bevel, smoothness: state.smooth });
   applyMaterials();
   stage.setLogo(logo);
-  stage.updateFloorHeight(!!getAnimation(state.anim).tall);
+  updateFloorForAnim();
   if (old) old.traverse(o => o.geometry?.dispose());
   invalidateThumbs();
 }
@@ -198,7 +198,7 @@ function applySceneToEngine() {
   stage.setParticles(state.particles, state.density);
   stage.cameraMove = state.camMove;
   stage.cameraAmount = state.camAmount;
-  stage.updateFloorHeight(!!getAnimation(state.anim).tall);
+  updateFloorForAnim();
   applyMaterials();
 }
 
@@ -289,7 +289,10 @@ function tick(now) {
   animClock += dt * state.speed;
   camClock += dt;
   stage.controls.update();
-  poseAt(getAnimation(state.anim), animClock, stage.motion, logo.children, false);
+  const anim = getAnimation(state.anim), after = afterLoop();
+  // Intro + loop previews exactly the clip that will be exported, on the camera's clock.
+  if (after) poseSequence(anim, after, camClock % state.seconds, state.seconds, state.speed, stage.motion, logo.children);
+  else poseAt(anim, animClock, stage.motion, logo.children, false);
   stage.render((camClock % state.seconds) / state.seconds);
 }
 
@@ -355,13 +358,15 @@ async function runExport() {
       }
 
       const fit = fitLoop(anim, seconds, state.speed);
+      const after = afterLoop();
       cancelExport = false;
       showProgress(`Renderizando ${ANIMATED[fmt]}${stage.transparent && fmt !== 'mp4' ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
       const job = {
         canvas, renderer: stage.renderer, kind: fmt, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
         renderFrame: (i, t) => {
-          poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
+          if (after) poseSequence(anim, after, t, seconds, state.speed, stage.motion, logo.children);
+          else poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
           stage.render(t / seconds);
         },
         onProgress: p => setProgress(p, started),
@@ -806,10 +811,44 @@ function renderAnimationList() {
   if (state.animTab === 'preset') { renderPresets(); return; }
   chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
     animClock = 0;
+    camClock = 0;
     if (a.round) stage.frame(true);
-    stage.updateFloorHeight(!!a.tall);
+    updateFloorForAnim();
+    syncAfterIntro();
     updateLoopNote();
   }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
+}
+
+/** The loop chosen to follow the current intro, or null. */
+function afterLoop() {
+  const anim = getAnimation(state.anim);
+  if (anim.kind !== 'intro' || !state.afterIntro || state.afterIntro === 'none') return null;
+  const after = getAnimation(state.afterIntro);
+  return after.kind === 'loop' && after.period ? after : null;
+}
+
+/** The floor drops for animations that sweep below the logo, intro or the loop after it. */
+function updateFloorForAnim() {
+  stage.updateFloorHeight(!!(getAnimation(state.anim).tall || afterLoop()?.tall));
+}
+
+function initAfterIntro() {
+  const sel = $('#after-intro');
+  sel.add(new Option('Nada, se queda quieto', 'none'));
+  ANIMATIONS.filter(a => a.kind === 'loop' && a.period).forEach(a => sel.add(new Option(a.label, a.id)));
+  sel.addEventListener('change', () => {
+    state.afterIntro = sel.value;
+    camClock = 0;
+    updateFloorForAnim();
+    updateLoopNote();
+    save();
+  });
+  syncAfterIntro();
+}
+
+function syncAfterIntro() {
+  $('#after-row').hidden = getAnimation(state.anim).kind !== 'intro';
+  $('#after-intro').value = state.afterIntro || 'none';
 }
 
 function initAnimations() {
@@ -861,6 +900,7 @@ function syncSceneUI() {
   $('#particles').checked = state.particles;
   $('#shine').checked = state.shine;
   syncLightPad();
+  syncAfterIntro();
   syncColorRows();
   updateLoopNote();
 }
@@ -1015,7 +1055,15 @@ function syncExportOpts() {
 function updateLoopNote() {
   const anim = getAnimation(state.anim);
   const el = $('#loop-note');
-  if (anim.kind === 'intro') { el.textContent = `Intro de ${anim.duration.toFixed(1)} s y luego se mantiene.`; return; }
+  if (anim.kind === 'intro') {
+    const after = afterLoop();
+    if (!after) { el.textContent = `Intro de ${(anim.duration / state.speed).toFixed(1)} s y luego se queda quieto.`; return; }
+    const s = sequenceTiming(anim, after, state.seconds, state.speed);
+    el.textContent = s.rest > 0
+      ? `Intro de ${s.introSecs.toFixed(1)} s y después «${after.label}»: ${s.fit.cycles} ciclo${s.fit.cycles === 1 ? '' : 's'} en ${s.rest.toFixed(1)} s, terminando en reposo.`
+      : `La intro dura ${s.introSecs.toFixed(1)} s y no deja tiempo para «${after.label}»: alarga la duración.`;
+    return;
+  }
   if (!anim.period) { el.textContent = ''; return; }
   const fit = fitLoop(anim, state.seconds, state.speed);
   el.textContent = `Bucle perfecto: ${fit.cycles} ciclo${fit.cycles > 1 ? 's' : ''} en ${state.seconds} s (velocidad ajustada a ${fit.speed.toFixed(2)}x).`;
@@ -1063,6 +1111,7 @@ function init() {
   $('#shine').checked = state.shine;
   $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
   initLightPad();
+  initAfterIntro();
 
   const fileInput = $('#file');
   $('#btn-open').onclick = () => fileInput.click();

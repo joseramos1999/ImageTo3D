@@ -361,6 +361,24 @@ export function poseAt(anim, t, motion, pieces, once) {
   }
 }
 
+/**
+ * An intro followed by a loop on a `clip`-second timeline (t in real seconds): the intro
+ * plays at the user's speed and the loop fills the rest with a whole number of cycles, so
+ * the clip ends exactly back at rest.
+ */
+export function sequenceTiming(intro, after, clip, speed) {
+  const introSecs = intro.duration / speed;
+  const rest = Math.max(0, clip - introSecs);
+  const fit = rest > 0 ? fitLoop(after, rest, speed) : { speed, cycles: 0 };
+  return { introSecs, rest, fit };
+}
+
+export function poseSequence(intro, after, t, clip, speed, motion, pieces) {
+  const { introSecs, fit } = sequenceTiming(intro, after, clip, speed);
+  if (t < introSecs) poseAt(intro, t * speed, motion, pieces, true);
+  else poseAt(after, (t - introSecs) * fit.speed, motion, pieces, true);
+}
+
 /** A representative instant for a still (preset thumbnails). Loops may set `still`, the
  *  phase where they look most characteristic (an explosion mid-burst, not at rest). */
 export function stillTime(anim) {
