@@ -294,3 +294,16 @@ input[type=color] {
 }
 .note.warn { color: var(--danger); }
 .btn.primary:disabled { filter: grayscale(1); opacity: .45; }
+
+/* ── output size ── */
+.select {
+  width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 8px; outline: none; cursor: pointer;
+}
+.select:focus { border-color: var(--accent); }
+.custom-size input {
+  width: 72px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 6px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.custom-size input:focus { border-color: var(--accent); outline: none; }
+.custom-size .times { color: var(--muted); }

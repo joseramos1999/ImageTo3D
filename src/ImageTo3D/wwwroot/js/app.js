@@ -13,6 +13,7 @@ import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateVideoBytes, videoFileName } from './exporter.js';
 import { openSink } from './filesink.js';
+import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
 
@@ -25,11 +26,11 @@ const DEFAULTS = {
   anim: 'rotate-y', animTab: 'preset', speed: 1,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none',
   bloom: 0, bloomTh: 0.85, particles: false, density: 1,
-  format: 'mp4', res: '1080', aspect: '16:9', fps: '30', seconds: 6, transparent: false, stlWidth: 100,
+  format: 'mp4', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
 };
 const STORE_KEY = 'imageto3d.settings.v1';
 const state = { ...DEFAULTS };
-try { Object.assign(state, JSON.parse(localStorage.getItem(STORE_KEY) || '{}')); } catch { /* fresh start */ }
+try { Object.assign(state, migrateSettings(JSON.parse(localStorage.getItem(STORE_KEY) || '{}'))); } catch { /* fresh start */ }
 const save = () => {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
   markDirty();
@@ -283,7 +284,7 @@ function tick(now) {
 // ───────── layout: letterboxed viewport in the export aspect ─────────
 function layoutViewport() {
   const box = $('#stage').getBoundingClientRect();
-  const [aw, ah] = state.aspect.split(':').map(Number);
+  const [aw, ah] = sizeOf(state);
   const availW = box.width - 40, availH = box.height - 40;
   let w = availW, h = w * ah / aw;
   if (h > availH) { h = availH; w = h * aw / ah; }
@@ -296,11 +297,7 @@ new ResizeObserver(layoutViewport).observe($('#stage'));
 
 // ───────── export ─────────
 function exportDims() {
-  const base = state.res === '2160' ? 2160 : 1080;
-  const long = Math.round(base * 16 / 9);
-  if (state.aspect === '9:16') return [base, long];
-  if (state.aspect === '1:1') return [base, base];
-  return [long, base];
+  return sizeOf(state);
 }
 
 async function runExport() {
@@ -508,14 +505,14 @@ function startProject(id = crypto.randomUUID()) {
 /** Applies a whole set of work settings at once (projects, undo / redo). */
 function applySettings(s) {
   const prev = { ...state };
-  Object.assign(state, workSettings({ ...DEFAULTS, ...s }));
+  Object.assign(state, workSettings({ ...DEFAULTS, ...migrateSettings(s) }));
   stage.setUserScale(state.scale);
   applySceneToEngine();
   syncSceneUI();
   segSyncs.forEach(fn => fn());
-  $('#transparent').checked = state.transparent;
+  syncSizeUI();
   syncExportOpts();
-  if (prev.aspect !== state.aspect) layoutViewport();
+  if (String(sizeOf(prev)) !== String(sizeOf(state))) layoutViewport();
   if (logo && (prev.depth !== state.depth || prev.bevel !== state.bevel)) rebuildMeshes();
   if (source && prev.smooth !== state.smooth) requestRetrace('outlines');
   save();
@@ -897,6 +894,36 @@ function initBackgrounds() {
   });
 }
 
+function initSize() {
+  const sel = $('#size');
+  SIZES.forEach(s => sel.add(new Option(s.label, s.id)));
+  const changed = () => { layoutViewport(); frameCamera(); updateExportEstimate(); save(); };
+  sel.addEventListener('change', () => {
+    if (sel.value === 'custom' && state.size !== 'custom') {
+      // Start the custom size from whatever was selected, so only one number needs changing.
+      [state.customW, state.customH] = sizeOf(state);
+    }
+    state.size = sel.value;
+    syncSizeUI();
+    changed();
+  });
+  for (const [id, key] of [['#custom-w', 'customW'], ['#custom-h', 'customH']]) {
+    $(id).addEventListener('change', e => {
+      state[key] = evenClamp(e.target.value);
+      e.target.value = state[key];
+      changed();
+    });
+  }
+  syncSizeUI();
+}
+
+function syncSizeUI() {
+  $('#size').value = state.size;
+  $('#custom-size').hidden = state.size !== 'custom';
+  $('#custom-w').value = evenClamp(state.customW);
+  $('#custom-h').value = evenClamp(state.customH);
+}
+
 function syncExportOpts() {
   document.querySelectorAll('.export-opts').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(state.format); });
   const label = { mp4: 'Exportar vídeo MP4', png: 'Exportar imagen PNG', glb: 'Exportar modelo GLB', stl: 'Exportar STL (impresión 3D)' };
@@ -944,8 +971,7 @@ function init() {
   chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; camClock = 0; });
   segmented('#side-mode', 'sideMode', () => { applyMaterials(); syncColorRows(); });
   segmented('#format', 'format', syncExportOpts);
-  segmented('#res', 'res', updateExportEstimate);
-  segmented('#aspect', 'aspect', () => { layoutViewport(); frameCamera(); updateExportEstimate(); });
+  initSize();
   segmented('#fps', 'fps', updateExportEstimate);
 
   $('#color').value = state.color;
@@ -954,8 +980,6 @@ function init() {
   $('#side-color').addEventListener('input', e => { state.sideColor = e.target.value; applyMaterials(); save(); });
   $('#particles').checked = state.particles;
   $('#particles').addEventListener('change', e => { state.particles = e.target.checked; stage.setParticles(state.particles, state.density); save(); });
-  $('#transparent').checked = state.transparent;
-  $('#transparent').addEventListener('change', e => { state.transparent = e.target.checked; save(); });
 
   const fileInput = $('#file');
   $('#btn-open').onclick = () => fileInput.click();

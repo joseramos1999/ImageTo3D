@@ -154,12 +154,14 @@
         <div class="seg" id="format">
           <button data-v="mp4">MP4</button><button data-v="png">PNG</button><button data-v="glb">GLB</button><button data-v="stl">STL</button>
         </div>
-        <div class="export-opts" data-for="mp4 png">
-          <div class="row"><label>Calidad</label>
-            <div class="seg" id="res"><button data-v="1080">1080p</button><button data-v="2160">4K</button></div>
-          </div>
-          <div class="row"><label>Formato</label>
-            <div class="seg" id="aspect"><button data-v="16:9">16:9</button><button data-v="9:16">9:16</button><button data-v="1:1">1:1</button></div>
+        <div class="export-opts" data-for="mp4 webm pngseq png">
+          <label class="sub" for="size">Tamaño</label>
+          <select id="size" class="select"></select>
+          <div class="row custom-size" id="custom-size">
+            <label for="custom-w">Ancho × alto</label>
+            <input type="number" id="custom-w" min="64" max="7680" step="2" aria-label="Ancho en píxeles">
+            <span class="times">×</span>
+            <input type="number" id="custom-h" min="64" max="7680" step="2" aria-label="Alto en píxeles">
           </div>
         </div>
         <div class="export-opts" data-for="mp4">
