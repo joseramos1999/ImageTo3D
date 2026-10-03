@@ -8,7 +8,8 @@ import { initMaskUI } from './mask-ui.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, parseProject, PROJECT_EXT } from './project.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
-import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, timelineOf, fx } from './animations.js';
+import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, migrateAnimationSettings } from './animations.js';
+import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPngSequence, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
@@ -23,15 +24,18 @@ const $ = sel => document.querySelector(sel);
 const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
-  anim: 'rotate-y', animTab: 'preset', speed: 1, afterIntro: 'none', outro: 'none',
+  anim: 'rotate-y', animTab: 'preset', speed: 1,
+  mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink',
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
 };
+/** Settings from older versions (sizes, chained intro / outro) brought up to date. */
+const migrate = s => migrateAnimationSettings(migrateSettings(s));
 const STORE_KEY = 'imageto3d.settings.v1';
 const state = { ...DEFAULTS };
-try { Object.assign(state, migrateSettings(JSON.parse(localStorage.getItem(STORE_KEY) || '{}'))); } catch { /* fresh start */ }
+try { Object.assign(state, migrate(JSON.parse(localStorage.getItem(STORE_KEY) || '{}'))); } catch { /* fresh start */ }
 const save = () => {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
   markDirty();
@@ -290,10 +294,10 @@ function tick(now) {
   camClock += dt;
   stage.controls.update();
   // A chained clip (intro → loop → outro) previews exactly what will be exported, on the camera's clock.
-  const tl = currentTimeline();
-  if (tl) tl.pose(camClock % state.seconds, stage.motion, logo.children);
+  const tl = currentTimeline(), clip = clipSeconds();
+  if (tl) tl.pose(camClock % clip, stage.motion, logo.children);
   else poseAt(getAnimation(state.anim), animClock, stage.motion, logo.children, false);
-  stage.render((camClock % state.seconds) / state.seconds);
+  stage.render((camClock % clip) / clip);
 }
 
 // ───────── layout: letterboxed viewport in the export aspect ─────────
@@ -328,7 +332,7 @@ async function runExport() {
 
     const [w, h] = exportDims();
     const anim = getAnimation(state.anim);
-    const fps = Number(state.fps), seconds = state.seconds;
+    const fps = Number(state.fps), seconds = clipSeconds();
     let sink = null;
     if (ANIMATED[fmt]) {
       const support = await checkVideoSupport(stage.renderer, fmt, w, h, fps);
@@ -358,7 +362,7 @@ async function runExport() {
       }
 
       const fit = fitLoop(anim, seconds, state.speed);
-      const tl = currentTimeline(seconds);
+      const tl = currentTimeline();
       cancelExport = false;
       showProgress(`Renderizando ${ANIMATED[fmt]}${stage.transparent && fmt !== 'mp4' ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
@@ -430,8 +434,9 @@ async function updateExportEstimate() {
     note.classList.add('warn');
   }
   if (!ANIMATED[kind]) return;
-  const [w, h] = exportDims(), fps = Number(state.fps), frames = Math.round(state.seconds * fps);
-  const parts = [`≈ ${formatBytes(estimateBytes(kind, w, h, fps, state.seconds, stage.transparent))}`, `${frames} fotogramas`];
+  const seconds = clipSeconds();
+  const [w, h] = exportDims(), fps = Number(state.fps), frames = Math.round(seconds * fps);
+  const parts = [`≈ ${formatBytes(estimateBytes(kind, w, h, fps, seconds, stage.transparent))}`, `${frames} fotogramas`];
   const rate = Number(localStorage.getItem(RATE_KEY + kind));
   if (rate > 0) parts.push(`unos ${formatDuration(w * h * frames / rate)} de render`);
   el.textContent = parts.join(' · ');
@@ -538,7 +543,7 @@ function startProject(id = crypto.randomUUID()) {
 /** Applies a whole set of work settings at once (projects, undo / redo). */
 function applySettings(s) {
   const prev = { ...state };
-  Object.assign(state, workSettings({ ...DEFAULTS, ...migrateSettings(s) }));
+  Object.assign(state, workSettings({ ...DEFAULTS, ...migrate(s) }));
   stage.setUserScale(state.scale);
   applySceneToEngine();
   syncSceneUI();
@@ -718,7 +723,8 @@ const ON_CHANGE = {
   shineGain: () => stage.setShine(state.shine, state.shineGain),
   camAmount: () => { stage.cameraAmount = state.camAmount; },
   density: () => stage.setParticles(state.particles, state.density, '#ffffff'),
-  seconds: () => { updateLoopNote(); updateExportEstimate(); }, speed: updateLoopNote,
+  seconds: () => { updateLoopNote(); updateExportEstimate(); },
+  speed: () => { updateLoopNote(); updateExportEstimate(); if (state.animTab === 'seq') renderAnimationList(); },
 };
 
 const sliderSync = {};   // key → re-reads state into the slider
@@ -808,85 +814,85 @@ function syncColorRows() {
 function renderAnimationList() {
   const el = $('#animations');
   el.classList.toggle('presets', state.animTab === 'preset');
+  el.classList.toggle('seq', state.animTab === 'seq');
+  syncModeMarks();
   if (state.animTab === 'preset') { renderPresets(); return; }
+  if (state.animTab === 'seq') {
+    renderSequencePanel(el, state, {
+      change: patch => { Object.assign(state, patch); useSequence(); },
+      use: useSequence,
+    });
+    return;
+  }
   chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
-    animClock = 0;
-    camClock = 0;
+    state.mode = 'single';   // picking a single animation leaves the sequence
+    onAnimationChanged();
     if (a.round) stage.frame(true);
-    updateFloorForAnim();
-    syncAfterIntro();
-    updateLoopNote();
   }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
 }
 
-/** The loop chosen to follow the current intro, or null. */
-function afterLoop() {
-  const anim = getAnimation(state.anim);
-  if (anim.kind !== 'intro' || !state.afterIntro || state.afterIntro === 'none') return null;
-  const after = getAnimation(state.afterIntro);
-  return after.kind === 'loop' && after.period ? after : null;
+/** Makes the "Secuencia" the active animation (after any change in its panel). */
+function useSequence() {
+  state.mode = 'sequence';
+  onAnimationChanged();
+  if (state.animTab === 'seq') renderAnimationList();
+  save();
 }
 
-/** The chosen exit animation, or null. */
-function outroAnim() {
-  if (!state.outro || state.outro === 'none') return null;
-  const o = getAnimation(state.outro);
-  return o.kind === 'outro' ? o : null;
+function onAnimationChanged() {
+  animClock = 0;
+  camClock = 0;
+  updateFloorForAnim();
+  syncModeMarks();
+  syncDurationUI();
+  updateLoopNote();
+  updateExportEstimate();
 }
+
+/** A dot on the tab whose animation is in use: the sequence, or the single loop / intro. */
+function syncModeMarks() {
+  const single = getAnimation(state.anim).kind;
+  document.querySelectorAll('#anim-tabs button').forEach(b => {
+    b.classList.toggle('in-use', isSequence() ? b.dataset.v === 'seq' : b.dataset.v === single);
+  });
+}
+
+const isSequence = () => state.mode === 'sequence';
 
 /**
- * The current clip as intro → loop → outro (see timelineOf), or null for a plain
- * animation with nothing chained to it (which keeps its seamless-loop behaviour).
+ * In sequence mode, the clip as intro → loop × N → outro (see timelineOf); null for a
+ * single animation (which keeps its seamless-loop behaviour over "Duración").
  */
-function currentTimeline(clip = state.seconds) {
-  const anim = getAnimation(state.anim), after = afterLoop(), outro = outroAnim();
-  if (!after && !outro) return null;
-  const isIntro = anim.kind === 'intro';
-  return timelineOf({
-    intro: isIntro ? anim : null,
-    loop: isIntro ? after : (anim.period ? anim : null),
-    outro, clip, speed: state.speed,
-  });
+function currentTimeline() {
+  return isSequence() ? sequenceTimeline(state) : null;
 }
 
-function initOutro() {
-  const sel = $('#outro');
-  sel.add(new Option('Ninguna (el clip termina en reposo)', 'none'));
-  ANIMATIONS.filter(a => a.kind === 'outro')
-    .sort((a, b) => a.label.localeCompare(b.label, 'es'))
-    .forEach(a => sel.add(new Option(a.pieces ? `${a.label} ▦` : a.label, a.id)));
-  sel.addEventListener('change', () => {
-    state.outro = sel.value;
-    camClock = 0;
-    updateFloorForAnim();
-    updateLoopNote();
-    save();
-  });
-  sel.value = state.outro || 'none';
+/** The clip's length: built from the sequence's parts, or the "Duración" setting. */
+function clipSeconds() {
+  const tl = currentTimeline();
+  return tl ? Math.max(0.5, tl.clip) : state.seconds;
 }
 
-/** The floor drops for animations that sweep below the logo, intro or the loop after it. */
+/** The floor drops for animations that sweep below the logo. */
 function updateFloorForAnim() {
-  stage.updateFloorHeight(!!(getAnimation(state.anim).tall || afterLoop()?.tall || outroAnim()?.tall));
+  const p = isSequence() ? sequenceParts(state) : null;
+  stage.updateFloorHeight(!!(p ? (p.intro?.tall || p.loop?.tall || p.outro?.tall) : getAnimation(state.anim).tall));
 }
 
-function initAfterIntro() {
-  const sel = $('#after-intro');
-  sel.add(new Option('Nada, se queda quieto', 'none'));
-  ANIMATIONS.filter(a => a.kind === 'loop' && a.period).forEach(a => sel.add(new Option(a.label, a.id)));
-  sel.addEventListener('change', () => {
-    state.afterIntro = sel.value;
-    camClock = 0;
-    updateFloorForAnim();
-    updateLoopNote();
-    save();
-  });
-  syncAfterIntro();
+/** "Duración" is a setting for single animations; a sequence's length comes from its parts. */
+function syncDurationUI() {
+  $('.slider[data-key="seconds"]').hidden = isSequence();
 }
 
-function syncAfterIntro() {
-  $('#after-row').hidden = getAnimation(state.anim).kind !== 'intro';
-  $('#after-intro').value = state.afterIntro || 'none';
+/** A representative pose for stills and thumbnails. */
+function poseStill() {
+  if (isSequence()) {
+    const p = sequenceParts(state), a = p.loop || p.intro || p.outro;
+    if (!a) return resetPose(stage.motion, logo.children);
+    return poseAt(a, a.kind === 'outro' ? 0 : stillTime(a), stage.motion, logo.children, true);
+  }
+  const anim = getAnimation(state.anim);
+  poseAt(anim, stillTime(anim), stage.motion, logo.children, true);
 }
 
 function initAnimations() {
@@ -938,8 +944,8 @@ function syncSceneUI() {
   $('#particles').checked = state.particles;
   $('#shine').checked = state.shine;
   syncLightPad();
-  syncAfterIntro();
-  $('#outro').value = state.outro || 'none';
+  syncModeMarks();
+  syncDurationUI();
   syncColorRows();
   updateLoopNote();
 }
@@ -968,8 +974,7 @@ async function renderThumbs() {
     applySceneToEngine();
     const restore = stage.beginFixedSize(320, 180);
     stage.frame();
-    const anim = getAnimation(state.anim);
-    poseAt(anim, stillTime(anim), stage.motion, logo.children, true);
+    poseStill();
     stage.render(0.1);
     thumbs.set(p.id, canvas.toDataURL('image/jpeg', 0.82));
     restore();
@@ -980,7 +985,7 @@ async function renderThumbs() {
     stage.controls.target.copy(target);
     stage.controls.update();
     poseAt(getAnimation(state.anim), animClock, stage.motion, logo.children, false);
-    stage.render((camClock % state.seconds) / state.seconds);
+    stage.render((camClock % clipSeconds()) / clipSeconds());
 
     const img = document.querySelector(`#animations .preset[data-id="${p.id}"] .thumb`);
     if (img) img.innerHTML = `<img src="${thumbs.get(p.id)}" alt="">`;
@@ -1094,28 +1099,22 @@ function syncExportOpts() {
 function updateLoopNote() {
   const anim = getAnimation(state.anim);
   const el = $('#loop-note');
-  const tl = currentTimeline();
   const s = n => n.toFixed(1).replace('.', ',') + ' s';
+  el.classList.remove('warn');
+  const tl = currentTimeline();
   if (tl) {
-    // Describe the chained clip part by part: intro → loop / still → outro.
-    const after = afterLoop(), outro = outroAnim(), isIntro = anim.kind === 'intro';
-    const loop = isIntro ? after : (anim.period ? anim : null);
-    const parts = [];
-    if (isIntro) parts.push(`intro «${anim.label}» ${s(tl.introSecs)}`);
-    if (tl.mid > 0) {
-      parts.push(loop && tl.fit
-        ? `«${loop.label}» ${tl.fit.cycles} ciclo${tl.fit.cycles === 1 ? '' : 's'} en ${s(tl.mid)}`
-        : `quieto ${s(tl.mid)}`);
-    }
-    if (outro) parts.push(`salida «${outro.label}» ${s(tl.outroSecs)}`);
-    const text = parts.join(' → ');
-    el.textContent = tl.fits
-      ? text.charAt(0).toUpperCase() + text.slice(1) + '.'
-      : `No cabe: la intro y la salida suman ${s(tl.introSecs + tl.outroSecs)} y la duración es ${s(state.seconds)}. Alarga la duración.`;
-    el.classList.toggle('warn', !tl.fits);
+    // Sequence: the length comes from its parts.
+    const p = sequenceParts(state), parts = [];
+    if (p.intro) parts.push(`intro ${s(tl.introSecs)}`);
+    if (p.loop) parts.push(`«${p.loop.label}» × ${state.seqReps} (${s(tl.mid)})`);
+    else if (p.still && tl.mid > 0) parts.push(`quieto ${s(tl.mid)}`);
+    if (p.outro) parts.push(`salida ${s(tl.outroSecs)}`);
+    el.textContent = parts.length
+      ? `Duración ${s(tl.clip)}, marcada por la secuencia: ${parts.join(' → ')}.`
+      : 'La secuencia está vacía: elige una intro, un bucle o una salida en la pestaña Secuencia.';
+    el.classList.toggle('warn', !parts.length);
     return;
   }
-  el.classList.remove('warn');
   if (anim.kind === 'intro') { el.textContent = `Intro de ${s(anim.duration / state.speed)} y luego se queda quieto.`; return; }
   if (!anim.period) { el.textContent = ''; return; }
   const fit = fitLoop(anim, state.seconds, state.speed);
@@ -1165,8 +1164,7 @@ function init() {
   $('#shine').checked = state.shine;
   $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
   initLightPad();
-  initAfterIntro();
-  initOutro();
+  syncDurationUI();
 
   const fileInput = $('#file');
   $('#btn-open').onclick = () => fileInput.click();

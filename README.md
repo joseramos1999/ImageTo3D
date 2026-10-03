@@ -9,7 +9,7 @@ Funciona sin conexión: todo se renderiza en local, con la GPU.
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, limpieza de ruido, inversión, relleno de agujeros y una vista previa antes / comparar / después.
 - **Geometría:** profundidad, bisel, suavizado y escala.
 - **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
-- **Animación:** 112 animaciones (48 bucles, 34 intros y 29 salidas; algunas revelan el logo con planos de recorte) que se encadenan en un clip completo, intro → bucle → salida, con uniones suaves; y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
+- **Animación:** 112 animaciones (48 bucles, 34 intros y 29 salidas; algunas revelan el logo con planos de recorte) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
 - **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
@@ -27,6 +27,7 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/materials.js       24 materiales
          ├─ js/animations.js      60 animaciones, funciones puras del tiempo
          ├─ js/presets.js         16 estilos predeterminados
+         ├─ js/sequence-ui.js     pestaña Secuencia: intro, bucle × N y salida
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
          ├─ js/exporter.js        MP4 (H.264) y WebM (VP9, con alfa), secuencia PNG (js/zip.js), PNG, GLB, STL
          ├─ js/formats.js         tamaños de salida predefinidos y personalizado

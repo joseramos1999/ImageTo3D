@@ -329,3 +329,34 @@ input[type=color] {
   box-shadow: 0 0 14px rgba(255, 220, 120, .65);
 }
 .light-read { position: absolute; right: 8px; bottom: 5px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── animation tabs (2 × 2) and the "Secuencia" panel ── */
+.seg.tabs#anim-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.seg.tabs button.in-use::after { content: " ●"; color: var(--accent); }
+.chips.seq { display: grid; gap: 8px; }
+.seq-slot { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: grid; gap: 6px; }
+.seq-head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.seq-num {
+  width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: var(--accent-ink);
+}
+.seq-slot.intro .seq-num { background: #5ab4f5; }
+.seq-slot.loop .seq-num { background: var(--accent); }
+.seq-slot.outro .seq-num { background: #f5a65a; }
+.seq-title { font-weight: 600; }
+.seq-dur { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.seq-reps { display: flex; align-items: center; gap: 6px; }
+.seq-reps-label { font-size: 12px; color: var(--muted); margin-right: auto; }
+.seq-reps .btn { width: 28px; padding: 3px 0; font-size: 14px; }
+.seq-count { min-width: 22px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.seq-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 2px; }
+.seq-seg {
+  flex-basis: 0; min-width: 18px; display: grid; place-items: center; overflow: hidden; white-space: nowrap;
+  font-size: 10.5px; font-weight: 700; color: var(--accent-ink);
+}
+.seq-seg.intro { background: #5ab4f5; }
+.seq-seg.loop { background: var(--accent); }
+.seq-seg.outro { background: #f5a65a; }
+.seq-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.seq-total { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.seq-active { font-size: 12px; color: var(--accent); font-weight: 600; }

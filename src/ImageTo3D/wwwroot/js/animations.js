@@ -596,13 +596,23 @@ function towardRest(w, motion, pieces) {
  * the loop fills the middle with a whole number of cycles (or the logo holds still),
  * so the outro always starts from rest and the joins never jump.
  */
-export function timelineOf({ intro = null, loop = null, outro = null, clip, speed }) {
+export function timelineOf({ intro = null, loop = null, outro = null, clip, speed, reps = null, hold = 0 }) {
   const introSecs = intro ? intro.duration / speed : 0;
   const outroSecs = outro ? outro.duration / speed : 0;
-  const mid = Math.max(0, clip - introSecs - outroSecs);
-  const fit = loop && mid > 0 ? fitLoop(loop, mid, speed) : null;
+  // Built from parts (the "Secuencia" tab): the loop runs exactly `reps` times — or, with no
+  // loop, the logo holds still for `hold` seconds — and the clip lasts as long as that adds up to.
+  // Otherwise the parts are fitted into a given `clip` length.
+  let mid, fit;
+  if (reps != null) {
+    mid = loop ? reps * loop.period / speed : Math.max(0, hold);
+    fit = loop ? { speed, cycles: reps } : null;
+    clip = introSecs + mid + outroSecs;
+  } else {
+    mid = Math.max(0, clip - introSecs - outroSecs);
+    fit = loop && mid > 0 ? fitLoop(loop, mid, speed) : null;
+  }
   return {
-    introSecs, mid, outroSecs, fit,
+    introSecs, mid, outroSecs, fit, clip,
     fits: introSecs + outroSecs <= clip + 1e-6,
     pose(t, motion, pieces) {
       if (intro && t < introSecs) return poseAt(intro, t * speed, motion, pieces, true);
@@ -638,4 +648,31 @@ export function fitLoop(anim, seconds, speed) {
   if (anim.kind !== 'loop' || !anim.period) return { speed, cycles: 0 };
   const cycles = Math.max(1, Math.round(seconds * speed / anim.period));
   return { speed: cycles * anim.period / seconds, cycles };
+}
+
+/**
+ * Settings saved before the "Secuencia" tab chained a loop after an intro (`afterIntro`)
+ * and an exit (`outro`) onto the single animation. Those become a sequence with the same
+ * parts, the loop repeated as many times as fitted the old duration.
+ */
+export function migrateAnimationSettings(s) {
+  if (!s || (!('afterIntro' in s) && !('outro' in s))) return s;
+  const out = { ...s };
+  delete out.afterIntro;
+  delete out.outro;
+  const anim = getAnimation(s.anim);
+  const pick = (id, kind) => { const a = id && id !== 'none' ? getAnimation(id) : null; return a?.kind === kind ? a : null; };
+  const intro = anim.kind === 'intro' ? anim : null;
+  const after = intro ? pick(s.afterIntro, 'loop') : null, outro = pick(s.outro, 'outro');
+  if (!after && !outro) return out;
+  const loop = intro ? after : (anim.period ? anim : null);
+  const speed = s.speed || 1, clip = s.seconds || 6;
+  const mid = Math.max(0, clip - (intro ? intro.duration / speed : 0) - (outro ? outro.duration / speed : 0));
+  return Object.assign(out, {
+    mode: 'sequence',
+    seqIntro: intro ? intro.id : 'none',
+    seqLoop: loop ? loop.id : 'still',
+    seqReps: loop ? Math.max(1, Math.round(mid * speed / loop.period)) : Math.max(1, Math.round(mid)),
+    seqOutro: outro ? outro.id : 'none',
+  });
 }
