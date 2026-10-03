@@ -394,7 +394,7 @@ public partial class MainWindow : Window
 
     private static string DefaultFolderFor(string ext) => ext switch
     {
-        "mp4" or "webm" or "zip" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+        "mp4" or "webm" or "avi" or "zip" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
         "png" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         _ => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
     };
@@ -403,6 +403,7 @@ public partial class MainWindow : Window
     {
         "mp4" => "Vídeo MP4 (*.mp4)|*.mp4",
         "webm" => "Vídeo WebM (*.webm)|*.webm",
+        "avi" => "Vídeo AVI (*.avi)|*.avi",
         "png" => "Imagen PNG (*.png)|*.png",
         "glb" => "Modelo glTF binario (*.glb)|*.glb",
         "stl" => "Modelo STL (*.stl)|*.stl",

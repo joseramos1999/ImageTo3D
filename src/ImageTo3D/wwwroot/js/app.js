@@ -13,7 +13,7 @@ import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence
 import { initUpdates } from './update-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
-import { exportVideo, exportPngSequence, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
+import { exportVideo, exportPngSequence, exportAvi, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
 import { openSink } from './filesink.js';
 import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host } from './host.js';
@@ -321,7 +321,9 @@ function exportDims() {
 }
 
 // Animated outputs share one path: video (MP4 / WebM) or a PNG sequence in a ZIP.
-const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', pngseq: 'secuencia PNG' };
+const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', avi: 'vídeo AVI', pngseq: 'secuencia PNG' };
+// Formats without an alpha channel: a transparent background comes out black.
+const NO_ALPHA = new Set(['mp4', 'avi']);
 
 async function runExport() {
   if (!logo || exporting) return;
@@ -365,7 +367,7 @@ async function runExport() {
       const fit = fitLoop(anim, seconds, state.speed);
       const tl = currentTimeline();
       cancelExport = false;
-      showProgress(`Renderizando ${ANIMATED[fmt]}${stage.transparent && fmt !== 'mp4' ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
+      showProgress(`Renderizando ${ANIMATED[fmt]}${stage.transparent && !NO_ALPHA.has(fmt) ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
       const job = {
         canvas, renderer: stage.renderer, kind: fmt, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
@@ -378,7 +380,7 @@ async function runExport() {
         isCancelled: () => cancelExport,
       };
       try {
-        const r = fmt === 'pngseq' ? await exportPngSequence(job) : await exportVideo(job);
+        const r = fmt === 'pngseq' ? await exportPngSequence(job) : fmt === 'avi' ? await exportAvi(job) : await exportVideo(job);
         if (!r) { await sink?.abort(); toast('Exportación cancelada'); return; }
         rememberRenderRate(fmt, w * h * seconds * fps, performance.now() - started);
         updateExportEstimate();
@@ -421,6 +423,7 @@ function rememberRenderRate(kind, pixels, ms) {
 const FORMAT_NOTES = {
   webm: 'Con el fondo «Transparente» el vídeo lleva canal alfa: navegadores, OBS, DaVinci Resolve, Shotcut, Kdenlive.',
   pngseq: 'Una imagen PNG por fotograma, en un ZIP. Es la forma de llevar transparencia a Premiere, After Effects o DaVinci.',
+  avi: 'AVI con Motion JPEG: se abre en casi cualquier reproductor o editor, también en programas antiguos. Ocupa más que un MP4.',
 };
 
 /** Size / frames / time estimate and the hardware check, under the animation options. */
@@ -430,8 +433,8 @@ async function updateExportEstimate() {
   const kind = state.format;
   note.textContent = FORMAT_NOTES[kind] || '';
   note.classList.remove('warn');
-  if (stage.transparent && kind === 'mp4') {
-    note.textContent = 'El MP4 no admite transparencia: el fondo saldrá negro. Para conservarla usa WebM o Secuencia PNG.';
+  if (stage.transparent && NO_ALPHA.has(kind)) {
+    note.textContent = `El ${kind === 'avi' ? 'AVI (Motion JPEG)' : 'MP4'} no admite transparencia: el fondo saldrá negro. Para conservarla usa WebM o Secuencia PNG.`;
     note.classList.add('warn');
   }
   if (!ANIMATED[kind]) return;
@@ -1089,7 +1092,7 @@ function syncSizeUI() {
 function syncExportOpts() {
   document.querySelectorAll('.export-opts').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(state.format); });
   const label = {
-    mp4: 'Exportar vídeo MP4', webm: 'Exportar vídeo WebM', pngseq: 'Exportar secuencia PNG (ZIP)',
+    mp4: 'Exportar vídeo MP4', webm: 'Exportar vídeo WebM', avi: 'Exportar vídeo AVI', pngseq: 'Exportar secuencia PNG (ZIP)',
     png: 'Exportar imagen PNG', glb: 'Exportar modelo GLB', stl: 'Exportar STL (impresión 3D)',
   };
   $('#btn-export').textContent = label[state.format];

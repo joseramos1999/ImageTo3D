@@ -1,10 +1,11 @@
-// Exports: MP4 / WebM video, PNG sequence (ZIP), PNG still, GLB and STL models.
+// Exports: MP4 / WebM / AVI video, PNG sequence (ZIP), PNG still, GLB and STL models.
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 import * as MP4 from '../vendor/mp4-muxer/mp4-muxer.mjs';
 import * as WEBM from '../vendor/webm-muxer/webm-muxer.mjs';
 import { ZipWriter } from './zip.js';
+import { AviWriter } from './avi.js';
 
 export function download(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -58,6 +59,7 @@ export const videoBitrate = (width, height, fps) => Math.round(width * height * 
  *  background run around 0.6 bytes per pixel. */
 export function estimateBytes(kind, width, height, fps, seconds, alpha) {
   if (kind === 'pngseq') return width * height * 0.6 * fps * seconds;
+  if (kind === 'avi') return width * height * 0.06 * fps * seconds;   // JPEG at quality 0.92 (measured 0.035 on a dark plain background)
   return videoBitrate(width, height, fps) * seconds / 8 * (alpha ? 1.35 : 1);
 }
 
@@ -69,7 +71,7 @@ export async function checkVideoSupport(renderer, kind, width, height, fps) {
   if (Math.max(width, height) > maxRender) {
     return { ok: false, reason: `Tu tarjeta gráfica no puede renderizar a ${width}×${height} (máximo ${maxRender} px). Elige un tamaño menor.` };
   }
-  if (kind === 'pngseq') return { ok: true };
+  if (kind === 'pngseq' || kind === 'avi') return { ok: true };   // image encoders, no video codec needed
   if (typeof VideoEncoder === 'undefined') return { ok: false, reason: 'Este sistema no soporta codificación de vídeo (WebCodecs).' };
   const key = `${kind}:${width}x${height}@${fps}`;
   if (!supportCache.has(key)) supportCache.set(key, pickCodec(kind, width, height, fps, videoBitrate(width, height, fps)));
@@ -254,7 +256,50 @@ export async function exportPngSequence({ canvas, width, height, fps, seconds, r
   return { blob: sink ? null : new Blob(parts, { type: 'application/zip' }), path: sink?.path ?? null };
 }
 
-const EXT = { mp4: 'mp4', webm: 'webm', pngseq: 'zip' };
+/**
+ * In-memory target for writers that patch earlier bytes at the end (AVI header): appends
+ * in order, and a write to an earlier position is applied to the part already holding it.
+ */
+function memoryTarget() {
+  const parts = [];
+  let size = 0;
+  return {
+    parts,
+    write(pos, bytes) {
+      if (pos === size) { parts.push(bytes.slice()); size += bytes.length; return; }
+      let start = 0;
+      for (const part of parts) {
+        if (pos >= start && pos + bytes.length <= start + part.length) { part.set(bytes, pos - start); return; }
+        start += part.length;
+      }
+      throw new Error('escritura fuera de orden');
+    },
+  };
+}
+
+/**
+ * The animation as an AVI with Motion-JPEG frames: opens in practically any player or
+ * editor. JPEG has no alpha, so a transparent background comes out black.
+ */
+export async function exportAvi({ canvas, width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null, quality = 0.92 }) {
+  const memory = sink ? null : memoryTarget();
+  const avi = new AviWriter(sink ? (pos, bytes) => sink.write(pos, bytes) : memory.write, { width, height, fps });
+  const total = Math.round(seconds * fps);
+  for (let i = 0; i < total; i++) {
+    if (isCancelled()) return null;
+    renderFrame(i, i / fps);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
+    avi.addFrame(new Uint8Array(await blob.arrayBuffer()));
+    if (sink) await sink.drain(32 * 1024 * 1024);
+    onProgress((i + 1) / total);
+  }
+  avi.finish();
+  if (sink) await sink.close();
+  onProgress(1);
+  return { blob: sink ? null : new Blob(memory.parts, { type: 'video/x-msvideo' }), path: sink?.path ?? null };
+}
+
+const EXT = { mp4: 'mp4', webm: 'webm', avi: 'avi', pngseq: 'zip' };
 export const animationFileName = (kind, width, height) => `logo3d-${width}x${height}-${stamp()}.${EXT[kind]}`;
 
 export async function exportPNG({ canvas, renderFrame, width, height }) {

@@ -1,6 +1,6 @@
 # ImageTo3D
 
-App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4 o WebM (con transparencia), secuencia PNG, imagen PNG o modelo GLB/STL.
+App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4, WebM (con transparencia) o AVI, secuencia PNG, imagen PNG o modelo GLB/STL.
 
 Funciona sin conexión: todo se renderiza en local, con la GPU.
 
@@ -19,7 +19,7 @@ Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la �
 - **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
 - **Animación:** 112 animaciones (48 bucles, 34 intros y 29 salidas; algunas revelan el logo con planos de recorte) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
-- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
+- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI (Motion JPEG, el más compatible) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
 ## Arquitectura
 
@@ -37,7 +37,7 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/presets.js         16 estilos predeterminados
          ├─ js/sequence-ui.js     pestaña Secuencia: intro, bucle × N y salida
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
-         ├─ js/exporter.js        MP4 (H.264) y WebM (VP9, con alfa), secuencia PNG (js/zip.js), PNG, GLB, STL
+         ├─ js/exporter.js        MP4 (H.264), WebM (VP9, con alfa), AVI (Motion JPEG, js/avi.js), secuencia PNG (js/zip.js), PNG, GLB, STL
          ├─ js/formats.js         tamaños de salida predefinidos y personalizado
          ├─ js/filesink.js        escritura del vídeo a disco a través del host
          ├─ js/project.js         formato .i3d e historial de deshacer
