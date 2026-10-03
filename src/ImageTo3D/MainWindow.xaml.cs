@@ -197,6 +197,14 @@ public partial class MainWindow : Window
                     _readyTimer.Stop();
                     Splash.Visibility = Visibility.Collapsed;
                     OpenPendingProject();
+                    Post(new { type = "host-info", version = UpdateService.Current.ToString() });
+                    StartUpdateChecks();
+                    break;
+                case "update-check":
+                    _ = CheckForUpdateAsync(manual: true);
+                    break;
+                case "update-install":
+                    _ = InstallUpdateAsync();
                     break;
                 case "engine-error":
                     ShowError("El motor 3D no pudo arrancar: " + (msg.GetProperty("message").GetString() ?? "error desconocido"));
@@ -290,6 +298,76 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Post(new { type = "file-error", id, message = ex.Message });
+        }
+    }
+
+    // ── Self-update (see UpdateService) ──
+    private readonly UpdateService _updates = new();
+    private UpdateService.Release? _available;
+    private System.Windows.Threading.DispatcherTimer? _updateTimer;
+    private bool _installing;
+
+    private void StartUpdateChecks()
+    {
+        if (_updateTimer != null) return;   // a page reload sends "ready" again
+#if DEBUG
+        // Development builds only check on demand, unless pointed at a test feed.
+        if (Environment.GetEnvironmentVariable("IMAGETO3D_UPDATE_URL") == null) return;
+#endif
+        _updateTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromHours(12) };
+        _updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync(manual: false);
+        _updateTimer.Start();
+        // Not at the very first second: let the app finish starting first.
+        _ = Task.Delay(TimeSpan.FromSeconds(4)).ContinueWith(_ => Dispatcher.BeginInvoke(() => CheckForUpdateAsync(manual: false)));
+    }
+
+    private async Task CheckForUpdateAsync(bool manual)
+    {
+        try
+        {
+            _available = await _updates.CheckAsync();
+            if (_available is { } r)
+                Post(new { type = "update-available", version = r.Version.ToString(), current = UpdateService.Current.ToString(), notes = r.Notes, page = r.PageUrl, size = r.AssetSize, verified = r.Sha256 != null });
+            else if (manual)
+                Post(new { type = "update-none", current = UpdateService.Current.ToString() });
+        }
+        catch (Exception ex)
+        {
+            // Offline or GitHub unreachable: stay quiet unless the user asked.
+            Debug.WriteLine($"Update check failed: {ex.Message}");
+            if (manual) Post(new { type = "update-error", message = "No se pudo consultar si hay una versión nueva. Comprueba la conexión." });
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (_installing) return;
+        _installing = true;
+        try
+        {
+            var release = _available ?? await _updates.CheckAsync();
+            if (release == null) { Post(new { type = "update-none", current = UpdateService.Current.ToString() }); return; }
+            var last = -1;
+            var progress = new Progress<double>(p =>
+            {
+                var pct = (int)(p * 100);
+                if (pct == last) return;
+                last = pct;
+                Post(new { type = "update-progress", p });
+            });
+            var installer = await _updates.DownloadAsync(release, progress);
+            Post(new { type = "update-installing", version = release.Version.ToString() });
+            await Task.Delay(600);   // let the message paint
+            UpdateService.LaunchInstaller(installer);
+            Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            Post(new { type = "update-error", message = "No se pudo actualizar: " + ex.Message });
+        }
+        finally
+        {
+            _installing = false;
         }
     }
 

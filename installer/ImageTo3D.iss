@@ -73,6 +73,8 @@ Root: HKA; Subkey: "Software\Classes\ImageTo3D.Project\shell\open\command"; Valu
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Self-update: the app runs this installer silently with /RELAUNCH=1 and closes, so reopen it.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: IsUpdateRelaunch
 
 [UninstallDelete]
 ; Caché de WebView2 y ajustes guardados (carpeta creada por la app en el primer arranque).
@@ -114,6 +116,11 @@ begin
       Tries := Tries + 1;
     end;
   end;
+end;
+
+function IsUpdateRelaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
 end;
 
 function InitializeSetup(): Boolean;

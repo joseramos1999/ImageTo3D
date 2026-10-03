@@ -10,6 +10,7 @@ import { History, workSettings, serializeProject, parseProject, PROJECT_EXT } fr
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, migrateAnimationSettings } from './animations.js';
 import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence-ui.js';
+import { initUpdates } from './update-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPngSequence, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
@@ -1201,6 +1202,11 @@ function init() {
   updateLoopNote();
   layoutViewport();
 
+  initUpdates({
+    toast,
+    beforeInstall: async () => { flushHistory(); await autosave(); },
+    isBusy: () => exporting,
+  });
   restoreLastSession();
   requestAnimationFrame(tick);
   window.__engineReady = true;

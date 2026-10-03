@@ -10,6 +10,8 @@ Descarga `ImageTo3D-Setup-<versión>.exe` desde la [última versión](https://gi
 
 El instalador no está firmado, así que la primera vez Windows SmartScreen mostrará «Windows protegió su PC»: pulsa **Más información** → **Ejecutar de todas formas**.
 
+Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la última versión en GitHub y, si hay una nueva, avisa con sus novedades. «Actualizar ahora» descarga el instalador, comprueba su huella SHA-256 con la publicada en GitHub, lo instala en silencio y vuelve a abrir la app, conservando proyectos y recientes. También se puede comprobar a mano pulsando el número de versión en la barra superior.
+
 ## Qué hace
 
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, limpieza de ruido, inversión, relleno de agujeros y una vista previa antes / comparar / después.
@@ -43,11 +45,12 @@ ImageTo3D.exe (WPF, .NET 10)
          └─ js/app.js, mask-ui.js interfaz ↔ motor
 ```
 
-El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs)) se encarga de:
+El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs) y [UpdateService.cs](src/ImageTo3D/UpdateService.cs)) se encarga de:
 - mostrar el diálogo nativo "Guardar como" al exportar;
 - escribir en disco los vídeos que llegan por trozos;
 - abrir los `.i3d` que se le pasan por línea de comandos (doble clic en el Explorador);
-- mostrar una pantalla de error con "Reintentar" si el motor no arranca o WebView2 falla.
+- mostrar una pantalla de error con "Reintentar" si el motor no arranca o WebView2 falla;
+- buscar versiones nuevas en GitHub Releases, descargar el instalador verificado y relanzarse actualizado (para probarlo sin GitHub, la variable de entorno `IMAGETO3D_UPDATE_URL` apunta a un JSON con la forma de la API).
 
 ### Decisiones clave
 
