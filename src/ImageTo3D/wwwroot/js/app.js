@@ -25,7 +25,7 @@ const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
   anim: 'rotate-y', animTab: 'preset', speed: 1,
-  mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink',
+  mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,

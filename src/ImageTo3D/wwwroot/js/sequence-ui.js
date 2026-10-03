@@ -1,6 +1,6 @@
 // "Secuencia" tab: build a complete clip from an intro, a loop repeated N times (or a
 // still pause) and an outro. The clip's length follows from the parts.
-import { ANIMATIONS, getAnimation, timelineOf } from './animations.js';
+import { ANIMATIONS, getAnimation, timelineOf, DEFAULT_TRANSITION } from './animations.js';
 
 export const SEQ_MAX_REPS = 20;
 
@@ -26,7 +26,8 @@ export function sequenceParts(state) {
 export function sequenceTimeline(state) {
   const p = sequenceParts(state);
   const reps = Math.max(1, Math.min(SEQ_MAX_REPS, Math.round(state.seqReps || 1)));
-  return timelineOf({ intro: p.intro, loop: p.loop, outro: p.outro, reps, hold: p.still ? reps : 0, speed: state.speed });
+  return timelineOf({ intro: p.intro, loop: p.loop, outro: p.outro, reps, hold: p.still ? reps : 0, speed: state.speed,
+    transition: state.seqTransition ?? DEFAULT_TRANSITION });
 }
 
 function select(options, value, label) {
@@ -94,6 +95,21 @@ export function renderSequencePanel(container, state, { change, use }) {
     bar.append(seg);
   }
 
+  // Transition: how long each join between parts eases in / out (0 = hard cut)
+  const trans = el('div', 'slider seq-trans');
+  const tv = state.seqTransition ?? DEFAULT_TRANSITION;
+  const head = el('div', 'lbl');
+  const tLabel = el('span', null, 'Transición entre partes'), tValue = el('span', null, tv > 0 ? secs(tv) : 'Corte seco');
+  head.append(tLabel, tValue);
+  const range = Object.assign(document.createElement('input'), { type: 'range', min: '0', max: '1.5', step: '0.05', value: String(tv) });
+  range.setAttribute('aria-label', 'Transición entre partes, en segundos');
+  const paint = () => { range.style.setProperty('--p', (range.value / 1.5 * 100) + '%'); tValue.textContent = Number(range.value) > 0 ? secs(Number(range.value)) : 'Corte seco'; };
+  paint();
+  range.addEventListener('input', paint);
+  range.addEventListener('change', () => change({ seqTransition: Number(range.value) }));
+  trans.append(head, range);
+  trans.hidden = !(parts.loop && (parts.intro || parts.outro));   // only joins next to a loop are eased
+
   const foot = el('div', 'seq-foot');
   const totalText = el('span', 'seq-total', total > 0 ? `Total ${secs(total)}` : 'Elige al menos una parte');
   const status = active
@@ -105,6 +121,6 @@ export function renderSequencePanel(container, state, { change, use }) {
     slot(1, 'Intro', 'intro', introSel, tl.introSecs),
     slot(2, 'Bucle', 'loop', loopSel, tl.mid, stepper),
     slot(3, 'Salida', 'outro', outroSel, tl.outroSecs),
-    bar, foot,
+    bar, trans, foot,
   );
 }

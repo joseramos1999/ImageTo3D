@@ -18,7 +18,7 @@ const RAW = [
   { id: 'neon-night', label: 'Neón nocturno',
     set: { anim: 'float', material: 'neon', color: '#ff2fa8', lighting: 'neon', floor: 'mirror', bg: 'black', bloom: 0.55, bloomTh: 0.75 } },
   { id: 'corporate', label: 'Corporativo',
-    set: { mode: 'sequence', seqIntro: 'intro-rise', seqLoop: 'breathe', seqReps: 1, seqOutro: 'none', lighting: 'soft', floor: 'shadow', bg: 'white' } },
+    set: { mode: 'sequence', seqIntro: 'intro-rise', seqLoop: 'breathe', seqReps: 1, seqOutro: 'none', seqTransition: 0.6, lighting: 'soft', floor: 'shadow', bg: 'white' } },
   { id: 'glass', label: 'Cristal',
     set: { anim: 'levitate', material: 'glass', color: '#7fd3ff', floor: 'mirror', bg: 'blue', bloom: 0.2 } },
   { id: 'diamond', label: 'Diamante',
@@ -26,7 +26,7 @@ const RAW = [
   { id: 'hologram', label: 'Holograma',
     set: { anim: 'tilt-spin', material: 'holo', lighting: 'neon', floor: 'grid', bg: 'indigo', bloom: 0.5, bloomTh: 0.7, camMove: 'sway' } },
   { id: 'epic', label: 'Intro épica',
-    set: { mode: 'sequence', seqIntro: 'intro-assemble', seqLoop: 'float', seqReps: 1, seqOutro: 'outro-disassemble', lighting: 'dramatic', floor: 'mirror', bg: 'vignette', bloom: 0.2, particles: true, camMove: 'push' } },
+    set: { mode: 'sequence', seqIntro: 'intro-assemble', seqLoop: 'float', seqReps: 1, seqOutro: 'outro-disassemble', seqTransition: 0.6, lighting: 'dramatic', floor: 'mirror', bg: 'vignette', bloom: 0.2, particles: true, camMove: 'push' } },
   { id: 'toy', label: 'Juguete',
     set: { anim: 'bounce', material: 'plastic', color: '#ff4d5e', lighting: 'soft', floor: 'shadow', bg: 'cream' } },
   { id: 'sunset', label: 'Atardecer',
@@ -38,7 +38,7 @@ const RAW = [
   { id: 'explosion', label: 'Explosión',
     set: { anim: 'explode', lighting: 'dramatic', floor: 'shadow', bg: 'vignette', bloom: 0.15 } },
   { id: 'cinema', label: 'Cine',
-    set: { mode: 'sequence', seqIntro: 'intro-spin', seqLoop: 'levitate', seqReps: 1, seqOutro: 'outro-dolly', material: 'titanium', lighting: 'dramatic', floor: 'mirror', bg: 'black', particles: true, density: 0.6, camMove: 'crane', shine: true } },
+    set: { mode: 'sequence', seqIntro: 'intro-spin', seqLoop: 'levitate', seqReps: 1, seqOutro: 'outro-dolly', seqTransition: 0.6, material: 'titanium', lighting: 'dramatic', floor: 'mirror', bg: 'black', particles: true, density: 0.6, camMove: 'crane', shine: true } },
   { id: 'party', label: 'Fiesta',
     set: { anim: 'dance', material: 'rainbow', lighting: 'neon', floor: 'spot', bg: 'pink', bloom: 0.4, bloomTh: 0.7, particles: true, density: 1.5 } },
   { id: 'elegant', label: 'Elegante',
@@ -48,7 +48,7 @@ const RAW = [
 export const PRESETS = RAW.map(p => ({ ...p, set: { ...BASE, ...p.set } }));
 export const PRESET_KEYS = Object.keys(BASE);
 // A sequence preset also fixes its parts; a single-animation preset leaves the user's sequence alone.
-const SEQ_KEYS = ['seqIntro', 'seqLoop', 'seqReps', 'seqOutro'];
+const SEQ_KEYS = ['seqIntro', 'seqLoop', 'seqReps', 'seqOutro', 'seqTransition'];
 
 /** True when the current state is exactly this preset (so its card shows as selected). */
 export function matchesPreset(preset, state) {

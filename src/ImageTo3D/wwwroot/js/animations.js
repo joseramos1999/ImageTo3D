@@ -596,7 +596,25 @@ function towardRest(w, motion, pieces) {
  * the loop fills the middle with a whole number of cycles (or the logo holds still),
  * so the outro always starts from rest and the joins never jump.
  */
-export function timelineOf({ intro = null, loop = null, outro = null, clip, speed, reps = null, hold = 0 }) {
+export const DEFAULT_TRANSITION = 0.6;   // seconds of easing at each join between parts
+
+/**
+ * Loop time with the joins eased: after an intro the loop starts from standstill and
+ * accelerates evenly over `inT` seconds, and before an outro it slows evenly to a stop over
+ * `outT` — so speed, not just position, carries across each join. u is real time into the
+ * loop part (0..mid); the result is the time to play the loop at.
+ */
+function easedLoopTime(u, mid, inT, outT) {
+  let tau = u < inT ? (u * u) / (2 * inT) : u - inT / 2;
+  const v = mid - u, span = mid - inT / 2 - outT / 2;
+  if (outT > 0 && v < outT) tau = span - (v * v) / (2 * outT);
+  // Easing in and out loses (inT + outT) / 2 of loop time; cruising that much faster keeps
+  // the loop's whole number of cycles, so it ends exactly where it began — otherwise the
+  // pull to rest at the end would have to unwind the missing part of a turn.
+  return Math.max(0, tau) * (span > 0 ? mid / span : 1);
+}
+
+export function timelineOf({ intro = null, loop = null, outro = null, clip, speed, reps = null, hold = 0, transition = DEFAULT_TRANSITION }) {
   const introSecs = intro ? intro.duration / speed : 0;
   const outroSecs = outro ? outro.duration / speed : 0;
   // Built from parts (the "Secuencia" tab): the loop runs exactly `reps` times — or, with no
@@ -618,13 +636,15 @@ export function timelineOf({ intro = null, loop = null, outro = null, clip, spee
       if (intro && t < introSecs) return poseAt(intro, t * speed, motion, pieces, true);
       if (t < introSecs + mid || !outro) {
         if (!loop || !fit) return resetPose(motion, pieces);
-        poseAt(loop, (t - introSecs) * fit.speed, motion, pieces, true);
-        // Many loops don't start at rest (a float already tilted, a wave mid-swell). Where the
-        // loop meets an intro or an outro, ease it in from / out to rest so the join is smooth.
-        const ramp = Math.min(0.35, mid / 4), local = t - introSecs;
+        // The transition: where the loop meets an intro or an outro it accelerates from / slows
+        // to a standstill (eased time), and its pose is pulled toward rest — many loops don't
+        // start at rest (a float already tilted, a wave mid-swell).
+        const T = Math.max(0, Math.min(transition, mid / 2)), local = t - introSecs;
+        const inT = intro ? T : 0, outT = outro ? T : 0;
+        poseAt(loop, easedLoopTime(local, mid, inT, outT) * fit.speed, motion, pieces, true);
         let w = 1;
-        if (intro) w = Math.min(w, smoothstep01(local / ramp));
-        if (outro) w = Math.min(w, smoothstep01((mid - local) / ramp));
+        if (inT > 0) w = Math.min(w, smoothstep01(local / inT));
+        if (outT > 0) w = Math.min(w, smoothstep01((mid - local) / outT));
         if (w < 1) towardRest(w, motion, pieces);
         return;
       }
