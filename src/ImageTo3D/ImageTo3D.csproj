@@ -9,7 +9,7 @@
     <AssemblyName>ImageTo3D</AssemblyName>
     <RootNamespace>ImageTo3D</RootNamespace>
     <Product>ImageTo3D</Product>
-    <Version>0.5.0</Version>
+    <Version>1.0.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>

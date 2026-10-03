@@ -1,8 +1,14 @@
 # ImageTo3D
 
-App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación, y lo exporta como vídeo MP4, imagen PNG o modelo GLB/STL.
+App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4 o WebM (con transparencia), secuencia PNG, imagen PNG o modelo GLB/STL.
 
 Funciona sin conexión: todo se renderiza en local, con la GPU.
+
+## Descargar
+
+Descarga `ImageTo3D-Setup-<versión>.exe` desde la [última versión](https://github.com/joseramos1999/ImageTo3D/releases/latest) y ejecútalo. Funciona en Windows 10 y 11 de 64 bits, sin instalar nada más (lleva .NET dentro). Se instala para tu usuario, sin pedir administrador.
+
+El instalador no está firmado, así que la primera vez Windows SmartScreen mostrará «Windows protegió su PC»: pulsa **Más información** → **Ejecutar de todas formas**.
 
 ## Qué hace
 
