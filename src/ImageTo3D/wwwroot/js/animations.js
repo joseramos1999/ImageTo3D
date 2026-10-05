@@ -59,6 +59,16 @@ export const ANIMATIONS = [
   // ── Loops ──
   { id: 'rotate-y', label: 'Giro Y', kind: 'loop', period: 4,
     apply: ({ m, p }) => { m.rotation.y = TAU * p; } },
+  { id: 'rotate-y-front', label: 'Giro frontal', kind: 'loop', period: 4,
+    // Spins about Y like «Giro Y» but never shows the mirrored back: on reaching edge-on
+    // (90°) it carries on from -90°, so the front comes round again. Near edge-on the depth
+    // thins to a sliver, which hides the swap between the two side views.
+    apply: ({ m, p }) => {
+      const th = ((TAU * p + Math.PI / 2) % Math.PI + Math.PI) % Math.PI - Math.PI / 2;
+      const k = Math.min(1, Math.abs(Math.cos(th)) / 0.3);
+      m.rotation.y = th;
+      m.scale.z = 0.15 + 0.85 * k * k * (3 - 2 * k);
+    } },
   { id: 'rotate-x', label: 'Giro X', kind: 'loop', period: 4, tall: true,
     apply: ({ m, p }) => { m.rotation.x = TAU * p; } },
   { id: 'spin-all', label: 'Giro total', kind: 'loop', period: 6, tall: true,
