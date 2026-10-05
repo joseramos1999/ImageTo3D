@@ -47,10 +47,18 @@ function slider(cls, title, aria, { min, max, step }, value, format, commit) {
   return wrap;
 }
 
+/** options: [value, text] pairs, or { group, items: [[value, text], ...] } for an <optgroup>. */
 function select(options, value, label) {
   const s = el('select', 'select seq-select');
   s.setAttribute('aria-label', label);
-  for (const [v, text] of options) s.add(new Option(text, v));
+  for (const o of options) {
+    if (Array.isArray(o)) { s.add(new Option(o[1], o[0])); continue; }
+    if (!o.items.length) continue;
+    const g = document.createElement('optgroup');
+    g.label = o.group;
+    for (const [v, text] of o.items) g.append(new Option(text, v));
+    s.append(g);
+  }
   s.value = value;
   return s;
 }
@@ -60,9 +68,10 @@ function select(options, value, label) {
  * the sequence the active animation); `use()` activates it without changing anything.
  */
 export function renderSequencePanel(container, state, { change, use }) {
-  const byKind = kind => ANIMATIONS.filter(a => a.kind === kind && (kind !== 'loop' || a.period))
-    .sort((a, b) => a.label.localeCompare(b.label, 'es'))
-    .map(a => [a.id, a.pieces ? `${a.label} ▦` : a.label]);
+  const sorted = list => list.sort((a, b) => a.label.localeCompare(b.label, 'es'));
+  const optionText = a => a.pieces ? `${a.label} ▦` : a.label;
+  const byKind = kind => sorted(ANIMATIONS.filter(a => a.kind === kind && (kind !== 'loop' || a.period)))
+    .map(a => [a.id, optionText(a)]);
   const tl = sequenceTimeline(state);
   const parts = sequenceParts(state);
   const active = state.mode === 'sequence';
@@ -103,8 +112,26 @@ export function renderSequencePanel(container, state, { change, use }) {
     v => v.toFixed(2) + 'x', v => change({ seqLoopSpeed: v }));
   loopSpeed.hidden = !parts.loop;
 
-  const outroSel = select([['none', 'Sin salida'], ...byKind('outro')], state.seqOutro, 'Salida');
+  // Exits are split into their own and intros played backwards (each says which intro it
+  // reverses); the one that undoes the chosen intro gets a group of its own at the top.
+  const outros = ANIMATIONS.filter(a => a.kind === 'outro');
+  const reversedText = a => `${a.label} (${getAnimation(a.reverseOf).label} al revés)${a.pieces ? ' ▦' : ''}`;
+  const mirrors = a => a.reverseOf && a.reverseOf === parts.intro?.id;
+  const outroSel = select([
+    ['none', 'Sin salida'],
+    { group: 'La inversa de tu intro', items: outros.filter(mirrors).map(a => [a.id, reversedText(a)]) },
+    { group: 'Salidas propias', items: sorted(outros.filter(a => !a.reverseOf)).map(a => [a.id, optionText(a)]) },
+    { group: 'Intros al revés', items: sorted(outros.filter(a => a.reverseOf && !mirrors(a))).map(a => [a.id, reversedText(a)]) },
+  ], state.seqOutro, 'Salida');
   outroSel.onchange = () => change({ seqOutro: outroSel.value });
+  // Under the exit: what a reversed one is, and whether it mirrors the chosen intro.
+  let outroHint = null;
+  if (parts.outro?.reverseOf) {
+    const from = getAnimation(parts.outro.reverseOf);
+    outroHint = el('p', 'seq-hint', parts.intro?.id === from.id
+      ? `⇄ Es tu intro «${from.label}» al revés: el clip termina como empezó.`
+      : `⇄ Es la intro «${from.label}» al revés.`);
+  }
 
   // Proportional timeline bar
   const bar = el('div', 'seq-bar');
@@ -134,7 +161,7 @@ export function renderSequencePanel(container, state, { change, use }) {
   container.replaceChildren(
     slot(1, 'Intro', 'intro', introSel, tl.introSecs),
     slot(2, 'Bucle', 'loop', loopSel, tl.mid, stepper, loopSpeed),
-    slot(3, 'Salida', 'outro', outroSel, tl.outroSecs),
+    slot(3, 'Salida', 'outro', outroSel, tl.outroSecs, ...(outroHint ? [outroHint] : [])),
     bar, trans, foot,
   );
 }

@@ -680,7 +680,8 @@ const REVERSED_INTROS = [
 for (const [from, id, label] of REVERSED_INTROS) {
   const src = ANIMATIONS.find(a => a.id === from);
   if (!src) continue;
-  ANIMATIONS.push({ id, label, kind: 'outro', duration: src.duration, pieces: src.pieces, tall: src.tall,
+  // `reverseOf` marks them in the UI: picked after their own intro, the clip ends as it began.
+  ANIMATIONS.push({ id, label, kind: 'outro', reverseOf: from, duration: src.duration, pieces: src.pieces, tall: src.tall,
     apply: ctx => src.apply({ ...ctx, q: 1 - ctx.q }) });
 }
 ANIMATIONS.push(
