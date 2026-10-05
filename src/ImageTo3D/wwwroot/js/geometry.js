@@ -87,6 +87,7 @@ export function buildLogoGroup(shapeSet, opts) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData.home = center.clone();
+    mesh.userData.extent = geo.boundingBox.getSize(new THREE.Vector3());   // to scale a piece from its base
     mesh.userData.index = i;
     group.add(mesh);
   });

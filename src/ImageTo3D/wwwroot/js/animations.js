@@ -36,7 +36,18 @@ const kf = (q, keys) => {
   }
   return keys[keys.length - 1][1];
 };
+/** Keyframes eased in and out between keys: holds that start and stop softly. */
+const ekf = (q, keys) => {
+  if (q <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    const [q1, v1] = keys[i];
+    if (q <= q1) { const [q0, v0] = keys[i - 1]; return v0 + (v1 - v0) * easeInOut((q - q0) / (q1 - q0)); }
+  }
+  return keys[keys.length - 1][1];
+};
 const deg = d => d * Math.PI / 180;
+/** Bottom-anchored vertical scale: how far to lower an object of height h scaled by sy. */
+const sink = (sy, h) => -(1 - sy) * h / 2;
 
 /** Staggered 0..1 progress for one piece: pieces start one after another by `rank`. */
 const stagger = (q, rank, spread = 0.45) => clamp01((q - rank * spread) / (1 - spread));
@@ -293,6 +304,91 @@ export const ANIMATIONS = [
       const f = Math.floor(p * 90);
       ps.forEach((piece, i) => { if (hash(f * 31 + i * 7) > 0.55) piece.visible = false; });
     } },
+  { id: 'equalizer', label: 'Ecualizador', kind: 'loop', period: 2, pieces: true, still: 0.3,
+    // Each piece jumps like a bar of a music visualiser, from its base, at its own whole-number rate.
+    apply: ({ ps, p }) => ps.forEach(piece => {
+      const u = piece.userData, f = 1 + Math.floor(u.rand * 3);
+      const sy = 1 + 0.7 * Math.pow(Math.sin(Math.PI * (f * p + u.rand2)), 2);
+      piece.scale.y = sy;
+      piece.position.y -= sink(sy, u.extent.y);
+    }) },
+  { id: 'relief', label: 'Relieve', kind: 'loop', period: 2.5, pieces: true, still: 0.3,
+    // A wave of depth: each piece pushes out of the logo and sinks back, left to right.
+    apply: ({ m, ps, p }) => {
+      ps.forEach(piece => {
+        const a = TAU * p - piece.userData.rankX * TAU;
+        piece.scale.z = 1 + 1.4 * Math.pow(0.5 + 0.5 * Math.sin(a), 2);
+      });
+      m.rotation.y = Math.sin(TAU * p) * 0.35;
+    } },
+  { id: 'zero-g', label: 'Gravedad cero', kind: 'loop', period: 8, pieces: true, still: 0.25,
+    // Pieces drift apart and turn slowly, each on its own path, as if weightless.
+    apply: ({ m, ps, p }) => {
+      const a = TAU * p;
+      ps.forEach(piece => {
+        const u = piece.userData, ph = u.rand * TAU, ph2 = u.rand2 * TAU;
+        piece.position.x += Math.sin(a + ph) * 0.08;
+        piece.position.y += Math.sin(2 * a + ph2) * 0.1;
+        piece.position.z += Math.sin(a + ph2) * 0.35;
+        piece.rotation.set(Math.sin(a + ph2) * 0.25, Math.sin(a + ph) * 0.3, Math.sin(2 * a + ph) * 0.12);
+      });
+      m.position.y = Math.sin(a) * 0.08;
+    } },
+  { id: 'cylinder', label: 'Cilindro', kind: 'loop', period: 5, pieces: true, still: 0.3,
+    // The logo curls into a ring, spins once around it and lies flat again.
+    apply: ({ m, ps, p, size }) => {
+      const k = Math.pow(Math.sin(Math.PI * p), 2);
+      m.rotation.y = TAU * easeInOut(p);
+      if (k < 1e-4) return;
+      const r0 = size.x / (TAU * 0.8), c = k / r0;   // bent into 80 % of a ring at the peak
+      ps.forEach(piece => {
+        const h = piece.userData.home, th = h.x * c;
+        piece.position.x = Math.sin(th) / c;
+        piece.position.z = h.z + (Math.cos(th) - 1) / c + k * r0;   // centred on the spin axis
+        piece.rotation.y = th;
+      });
+    } },
+  { id: 'step-turn', label: 'Paso a paso', kind: 'loop', period: 4,
+    // Four snappy quarter turns with a little hop, each followed by a pause.
+    apply: ({ m, p }) => {
+      const s = p * 4, i = Math.floor(s), f = clamp01((s - i) / 0.45);
+      m.rotation.y = (i + easeOutBack(f, 2.2)) * TAU / 4;
+      m.position.y = Math.sin(Math.PI * f) * 0.08;
+    } },
+  { id: 'flag', label: 'Bandera', kind: 'loop', period: 2, pieces: true, still: 0.25,
+    // Ripples like a flag on a pole: still at the left edge, waving more toward the right.
+    apply: ({ ps, p }) => ps.forEach(piece => {
+      const r = piece.userData.rankX, a = TAU * p - r * 4, amp = r * r;
+      piece.position.z += Math.sin(a) * 0.45 * amp;
+      piece.position.y += Math.sin(a - 0.8) * 0.06 * amp;
+      piece.rotation.y = Math.cos(a) * 0.45 * amp;   // follows the slope of the wave
+    }) },
+  { id: 'glance', label: 'Mirada', kind: 'loop', period: 5,
+    // Looks up to one side, then down to the other, and blinks.
+    apply: ({ m, p }) => {
+      m.rotation.y = ekf(p, [[0, 0], [0.1, 0.42], [0.32, 0.42], [0.45, -0.42], [0.7, -0.42], [0.82, 0], [1, 0]]);
+      m.rotation.x = ekf(p, [[0, 0], [0.1, -0.12], [0.32, -0.12], [0.45, 0.08], [0.7, 0.08], [0.82, 0], [1, 0]]);
+      m.position.x = m.rotation.y * 0.15;
+      m.scale.y = 1 - 0.14 * Math.exp(-Math.pow((p - 0.9) / 0.012, 2));
+    } },
+  { id: 'backflip', label: 'Mortal', kind: 'loop', period: 2, tall: true,
+    // Crouches, jumps into a backflip and lands with a squash.
+    apply: ({ m, p, size }) => {
+      let sy = 1, sx = 1;
+      if (p < 0.15) {
+        const c = Math.sin(Math.PI * p / 0.15);
+        sy = 1 - 0.12 * c; sx = 1 + 0.08 * c;
+      } else if (p < 0.75) {
+        const q = (p - 0.15) / 0.6;
+        m.position.y = Math.sin(Math.PI * q) * 1.5;
+        m.rotation.x = -TAU * easeInOut(q);
+      } else {
+        const c = Math.sin(Math.PI * (p - 0.75) / 0.25);
+        sy = 1 - 0.14 * c; sx = 1 + 0.1 * c;
+      }
+      m.scale.set(sx, sy, sx);
+      m.position.y += sink(sy, size.y);
+    } },
 
   // ── Intros (play once, then hold) ──
   { id: 'intro-pop', label: 'Pop', kind: 'intro', duration: 1.2,
@@ -470,6 +566,70 @@ export const ANIMATIONS = [
       piece.scale.setScalar(Math.max(0.001, e));
       piece.rotation.z = (1 - clamp01(e)) * 0.6;
     }) },
+  { id: 'intro-orbit', label: 'Órbita', kind: 'intro', duration: 2.4,
+    // Spirals in from far away, circling round to land in front of the camera.
+    apply: ({ m, q }) => {
+      const k = 1 - easeOutCubic(q), a = k * TAU * 1.25;
+      m.position.set(Math.sin(a) * 7 * k, k * 1.5, -(1 - Math.cos(a)) * 5 * k - k * 4);
+      m.rotation.y = -a * 0.5;
+      m.scale.setScalar(Math.max(0.001, clamp01(q * 4)));
+    } },
+  { id: 'intro-wipe', label: 'Cortina', kind: 'intro', duration: 1.6,
+    // Revealed from left to right while it turns to face the camera.
+    apply: ({ m, q, size, clip }) => {
+      if (q >= 1) return;
+      const half = size.x / 2 + 0.2;
+      clip('x', -half + 2 * half * easeInOut(q));
+      m.rotation.y = (1 - easeOutCubic(q)) * 0.5;
+    } },
+  { id: 'intro-swing-in', label: 'Columpio', kind: 'intro', duration: 2.2,
+    // Swings down from the side, hanging from its top edge, and settles.
+    apply: ({ m, q, size }) => {
+      const a = deg(95) * Math.exp(-2.5 * q) * Math.cos(TAU * 1.6 * q) * (1 - q), h = size.y / 2;
+      m.rotation.z = a;
+      m.position.set(Math.sin(a) * h, h * (1 - Math.cos(a)), 0);
+    } },
+  { id: 'intro-meteor', label: 'Meteoro', kind: 'intro', duration: 1.8,
+    // Falls from high up and far back, faster and faster, and lands with a squash and a shake.
+    apply: ({ m, q, size }) => {
+      if (q < 0.5) {
+        const k = 1 - easeInCubic(q / 0.5);
+        m.position.set(k * 7, k * 6, k * -12);
+        m.rotation.set(k * 2.5, k * -1.5, k * 1.2);
+        return;
+      }
+      const r = (q - 0.5) / 0.5, d = Math.exp(-5 * r) * Math.cos(TAU * 2.5 * r) * (1 - r);
+      m.scale.set(1 + 0.18 * d, 1 - 0.22 * d, 1 + 0.1 * d);
+      m.position.set(Math.sin(TAU * 7 * r) * 0.06 * (1 - r) ** 2, sink(1 - 0.22 * d, size.y), 0);
+    } },
+  { id: 'intro-fan', label: 'Abanico', kind: 'intro', duration: 1.8, pieces: true,
+    // The pieces start stacked in a column and open out like a hand fan around a point below.
+    apply: ({ ps, q, size }) => {
+      const k = 1 - easeOutBack(q, 1.3), py = -size.y * 0.9;
+      ps.forEach(piece => {
+        const h = piece.userData.home, dy = h.y - py;
+        const f = k * Math.atan2(h.x, dy), c = Math.cos(f), s = Math.sin(f);
+        piece.position.x = c * h.x - s * dy;
+        piece.position.y = py + s * h.x + c * dy;
+        piece.rotation.z = f;
+        piece.scale.setScalar(Math.max(0.001, clamp01(q * 5)));
+      });
+    } },
+  { id: 'intro-boomerang', label: 'Bumerán', kind: 'intro', duration: 2.2,
+    // Thrown in from the right: it curves away behind, comes back round from the left, spinning.
+    apply: ({ m, q }) => {
+      const k = 1 - easeOutCubic(q), a = k * TAU * 0.75;
+      m.position.set(-Math.sin(a) * 6, k * 0.8, (Math.cos(a) - 1) * 4);
+      m.rotation.z = a * 2;
+      m.rotation.x = -0.4 * k;
+    } },
+  { id: 'intro-sculpt', label: 'Esculpir', kind: 'intro', duration: 2, pieces: true,
+    // Starts as a flat cut-out and each piece springs out into depth, left to right.
+    apply: ({ m, ps, q }) => {
+      ps.forEach(piece => { piece.scale.z = Math.max(0.001, easeOutElastic(stagger(q, piece.userData.rankX, 0.6))); });
+      m.rotation.y = (1 - easeInOut(q)) * -0.7;
+      m.rotation.x = (1 - easeInOut(q)) * 0.25;
+    } },
 ];
 
 // ── Outros (exits): the last part of a complete clip ──
@@ -502,6 +662,10 @@ const REVERSED_INTROS = [
   ['intro-iris', 'outro-iris', 'Cerrar iris'],
   ['intro-neon', 'outro-neon', 'Apagar neón'],
   ['intro-glitch', 'outro-glitch', 'Glitch fuera'],
+  ['intro-orbit', 'outro-orbit', 'Órbita fuera'],
+  ['intro-wipe', 'outro-wipe', 'Cerrar cortina'],
+  ['intro-fan', 'outro-fan', 'Cerrar abanico'],
+  ['intro-boomerang', 'outro-boomerang', 'Bumerán fuera'],
 ];
 for (const [from, id, label] of REVERSED_INTROS) {
   const src = ANIMATIONS.find(a => a.id === from);
@@ -530,6 +694,63 @@ ANIMATIONS.push(
         piece.scale.setScalar(Math.max(0.001, 1 - clamp01((q - 0.6) / 0.4)));
       });
     } },
+  { id: 'outro-vortex', label: 'Sumidero', kind: 'outro', duration: 1.8, pieces: true,
+    // Swallowed by a whirlpool: the outer pieces first, spinning ever faster into the centre.
+    apply: ({ ps, q }) => ps.forEach(piece => {
+      const u = piece.userData, h = u.home;
+      const s = easeInCubic(stagger(q, 1 - u.rankR, 0.4)), a = s * TAU * 1.5, r = 1 - s;
+      piece.position.x = (h.x * Math.cos(a) - h.y * Math.sin(a)) * r;
+      piece.position.y = (h.x * Math.sin(a) + h.y * Math.cos(a)) * r;
+      piece.position.z = h.z - s * 2;
+      piece.rotation.z = a;
+      piece.scale.setScalar(Math.max(0.001, 1 - s));
+    }) },
+  { id: 'outro-melt', label: 'Derretir', kind: 'outro', duration: 2, pieces: true,
+    // Each piece slumps and spreads into a puddle at the foot of the logo, which then dries up.
+    apply: ({ ps, q, size }) => ps.forEach(piece => {
+      const u = piece.userData, ext = u.extent, h = u.home;
+      const d = easeInCubic(clamp01(q * 1.3 - u.rand * 0.3));
+      const sy = Math.max(0.02, 1 - d), dry = 1 - clamp01((q - 0.85) / 0.15);
+      const bottom = h.y - ext.y / 2 + (-size.y / 2 - (h.y - ext.y / 2)) * d;
+      piece.scale.set(Math.max(0.001, (1 + 0.35 * d) * dry), sy, Math.max(0.001, (1 + 0.35 * d) * dry));
+      piece.position.y = bottom + sy * ext.y / 2;
+    }) },
+  { id: 'outro-wind', label: 'Viento', kind: 'outro', duration: 2, pieces: true,
+    // Blown away piece by piece from the right edge, tumbling like leaves.
+    apply: ({ ps, q }) => ps.forEach(piece => {
+      const u = piece.userData, s = stagger(q, 1 - u.rankX, 0.55), e = easeInCubic(s);
+      piece.position.x += e * 12;
+      piece.position.y += Math.sin(Math.PI * s) * (u.rand - 0.3) * 1.2 + e * u.rand2 * 2;
+      piece.position.z += e * (u.rand - 0.5) * 4;
+      piece.rotation.set(e * (u.rand - 0.5) * 9, e * 4, e * (u.rand2 - 0.5) * 9);
+      piece.scale.setScalar(Math.max(0.001, 1 - e * 0.6));
+    }) },
+  { id: 'outro-tv-off', label: 'Apagar TV', kind: 'outro', duration: 1,
+    // An old television switching off: squashed to a line, then to a dot, then gone.
+    apply: ({ m, q }) => {
+      const a = easeInCubic(clamp01(q / 0.45)), b = easeInCubic(clamp01((q - 0.45) / 0.35)), c = clamp01((q - 0.8) / 0.2);
+      m.scale.set(Math.max(0.001, (1 + 0.15 * a) * (1 - 0.98 * b) * (1 - c)), Math.max(0.001, 1 - 0.97 * a), Math.max(0.001, 1 - 0.9 * a));
+    } },
+  { id: 'outro-dive', label: 'Zambullida', kind: 'outro', duration: 2, pieces: true,
+    // Piece by piece, left to right, each hops up and dives head first under its baseline.
+    apply: ({ ps, q, size, clip }) => {
+      clip('y', -size.y / 2 - 0.02, true);
+      ps.forEach(piece => {
+        const s = stagger(q, piece.userData.rankX, 0.5);
+        piece.position.y += Math.sin(Math.PI * clamp01(s / 0.6)) * 0.6 - easeInCubic(clamp01((s - 0.3) / 0.7)) * (size.y + 3);
+        piece.rotation.x = easeInOut(clamp01((s - 0.15) / 0.6)) * Math.PI;
+      });
+    } },
+  { id: 'outro-bubbles', label: 'Pompas', kind: 'outro', duration: 1.8, pieces: true,
+    // Each piece swells like a soap bubble, floats up a little and pops, at its own moment.
+    apply: ({ ps, q }) => ps.forEach(piece => {
+      const u = piece.userData, s = clamp01((q - u.rand * 0.6) / 0.4);
+      const scale = s < 0.75
+        ? 1 + 0.35 * easeOutCubic(s / 0.75) + Math.sin(s * TAU * 3) * 0.04 * s
+        : 1.35 * (1 - easeInCubic((s - 0.75) / 0.25));
+      piece.scale.setScalar(Math.max(0.001, scale));
+      piece.position.y += easeInOut(s) * 0.5;
+    }) },
 );
 
 export const INTRO_HOLD = 1.6;   // preview pause between intro replays

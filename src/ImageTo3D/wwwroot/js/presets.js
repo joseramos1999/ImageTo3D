@@ -43,6 +43,16 @@ const RAW = [
     set: { anim: 'dance', material: 'rainbow', lighting: 'neon', floor: 'spot', bg: 'pink', bloom: 0.4, bloomTh: 0.7, particles: true, density: 1.5 } },
   { id: 'elegant', label: 'Elegante',
     set: { anim: 'flip-pause', material: 'obsidian', floor: 'mirror', bg: 'white', shine: true, shineGain: 0.7 } },
+  { id: 'space', label: 'Espacio',
+    set: { mode: 'sequence', seqIntro: 'intro-orbit', seqLoop: 'zero-g', seqReps: 1, seqOutro: 'outro-vortex', seqTransition: 0.6, material: 'titanium', lighting: 'dramatic', floor: 'none', bg: 'black', bloom: 0.25, bloomTh: 0.8, particles: true, density: 1.5, camMove: 'spiral' } },
+  { id: 'retro-tv', label: 'Tele retro',
+    set: { mode: 'sequence', seqIntro: 'intro-glitch', seqLoop: 'glance', seqReps: 1, seqOutro: 'outro-tv-off', seqTransition: 0.6, material: 'plastic', color: '#ffd23f', lighting: 'studio', floor: 'none', bg: 'black', bloom: 0.3, bloomTh: 0.75 } },
+  { id: 'sculpture', label: 'Escultura',
+    set: { mode: 'sequence', seqIntro: 'intro-sculpt', seqLoop: 'cylinder', seqReps: 1, seqOutro: 'outro-melt', seqTransition: 0.6, material: 'marble', lighting: 'soft', floor: 'mirror', bg: 'graphite', shine: true, shineGain: 0.6 } },
+  { id: 'candy', label: 'Golosina',
+    set: { mode: 'sequence', seqIntro: 'intro-meteor', seqLoop: 'backflip', seqReps: 2, seqOutro: 'outro-bubbles', seqTransition: 0.6, material: 'plastic', color: '#ff7ad9', lighting: 'soft', floor: 'shadow', bg: 'pink' } },
+  { id: 'summer', label: 'Verano',
+    set: { mode: 'sequence', seqIntro: 'intro-boomerang', seqLoop: 'flag', seqReps: 2, seqOutro: 'outro-wind', seqTransition: 0.6, material: 'ocean', lighting: 'sunset', floor: 'shadow', bg: 'sunset', camMove: 'sway' } },
 ];
 
 export const PRESETS = RAW.map(p => ({ ...p, set: { ...BASE, ...p.set } }));
