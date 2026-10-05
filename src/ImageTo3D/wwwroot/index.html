@@ -168,11 +168,19 @@
         <div class="seg format-grid" id="format" role="group" aria-label="Formato">
           <button data-v="mp4" title="Vídeo H.264, se reproduce en todas partes">MP4</button>
           <button data-v="webm" title="Vídeo VP9, con transparencia si el fondo es «Transparente»">WebM</button>
-          <button data-v="avi" title="Vídeo AVI (Motion JPEG), compatible con casi cualquier programa">AVI</button>
+          <button data-v="avi" title="Vídeo AVI: Motion JPEG (compatible con casi todo) o sin compresión con transparencia (After Effects)">AVI</button>
           <button data-v="pngseq" title="Un PNG por fotograma en un ZIP, con transparencia">Secuencia PNG</button>
           <button data-v="png" title="Una imagen">PNG</button>
           <button data-v="glb" title="Modelo 3D con materiales">GLB</button>
           <button data-v="stl" title="Modelo para impresión 3D">STL</button>
+        </div>
+        <div class="export-opts" data-for="avi">
+          <div class="row"><label>Códec</label>
+            <div class="seg" id="avi-codec" role="group" aria-label="Códec AVI">
+              <button data-v="mjpg" title="Ligero y compatible con casi todo, sin transparencia">Motion JPEG</button>
+              <button data-v="rgba" title="Sin compresión, RGB + alfa (32 bits): conserva la transparencia en After Effects, Premiere y DaVinci">Sin compresión + alfa</button>
+            </div>
+          </div>
         </div>
         <p class="note" id="format-note"></p>
         <div class="export-opts" data-for="mp4 webm avi pngseq png">

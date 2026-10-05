@@ -21,11 +21,7 @@ public partial class MainWindow : Window
         // A window closed mid-export leaves no half-written video behind.
         Closed += (_, _) =>
         {
-            foreach (var (stream, path) in _sinks.Values)
-            {
-                stream.Dispose();
-                try { File.Delete(path); } catch (IOException) { /* best effort */ }
-            }
+            foreach (var sink in _sinks.Values) sink.Discard();
             _sinks.Clear();
         };
         var args = Environment.GetCommandLineArgs();
@@ -189,6 +185,7 @@ public partial class MainWindow : Window
                     break;
                 case "file-open":
                 case "file-write":
+                case "file-write-shared":
                 case "file-close":
                 case "file-abort":
                     OnFileMessage(msg);
@@ -219,9 +216,29 @@ public partial class MainWindow : Window
 
     // ── Streamed exports ──
     // Long videos are written to disk while they encode instead of being assembled in
-    // memory: the engine asks for a file (native "Save as" up front), sends base64 chunks
+    // memory: the engine asks for a file (native "Save as" up front), sends the chunks
     // with their byte offset (the MP4 header is patched at the end), then closes it.
-    private readonly Dictionary<string, (FileStream Stream, string Path)> _sinks = new();
+    // The chunks travel through a buffer shared with the page: the engine copies each one
+    // in and says where it goes ("file-write-shared"), with no base64 or JSON in between
+    // (an uncompressed AVI moves ~8 MB per frame). Base64 "file-write" is the fallback.
+    private sealed record Sink(FileStream Stream, string Path, CoreWebView2SharedBuffer? Shared)
+    {
+        public void Discard()
+        {
+            Dispose();
+            try { File.Delete(Path); } catch (IOException) { /* best effort */ }
+        }
+
+        public void Dispose()
+        {
+            Stream.Dispose();
+            Shared?.Dispose();
+        }
+    }
+
+    private const int SharedBufferBytes = 16 << 20;
+    private readonly Dictionary<string, Sink> _sinks = new();
+    private byte[]? _copyBuffer;
 
     private void OnFileMessage(JsonElement msg)
     {
@@ -243,20 +260,27 @@ public partial class MainWindow : Window
                     sink.Stream.Write(bytes, 0, bytes.Length);
                     Post(new { type = "file-ack", id });
                     break;
+                case "file-write-shared":
+                    var target = _sinks[id];
+                    var length = msg.GetProperty("len").GetInt32();
+                    if (target.Shared == null || length < 0 || length > SharedBufferBytes) throw new InvalidOperationException("trozo no válido");
+                    _copyBuffer ??= new byte[SharedBufferBytes];
+                    using (var shared = target.Shared.OpenStream())
+                        shared.ReadExactly(_copyBuffer, 0, length);
+                    target.Stream.Seek(msg.GetProperty("pos").GetInt64(), SeekOrigin.Begin);
+                    target.Stream.Write(_copyBuffer, 0, length);
+                    Post(new { type = "file-ack", id });
+                    break;
                 case "file-close":
                     if (_sinks.Remove(id, out var done))
                     {
-                        done.Stream.Dispose();
+                        done.Dispose();
                         Post(new { type = "file-closed", id });
                         Post(new { type = "saved", path = done.Path });
                     }
                     break;
                 case "file-abort":
-                    if (_sinks.Remove(id, out var aborted))
-                    {
-                        aborted.Stream.Dispose();
-                        try { File.Delete(aborted.Path); } catch (IOException) { /* best effort */ }
-                    }
+                    if (_sinks.Remove(id, out var aborted)) aborted.Discard();
                     Post(new { type = "file-closed", id });
                     break;
             }
@@ -264,11 +288,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             // Disk full, file locked...: the engine stops the export and tells the user.
-            if (_sinks.Remove(id, out var broken))
-            {
-                broken.Stream.Dispose();
-                try { File.Delete(broken.Path); } catch (IOException) { /* best effort */ }
-            }
+            if (_sinks.Remove(id, out var broken)) broken.Discard();
             Post(new { type = "file-error", id, message = ex.Message });
         }
     }
@@ -284,16 +304,39 @@ public partial class MainWindow : Window
             AddExtension = true,
             OverwritePrompt = true,
         };
-        if (dlg.ShowDialog(this) != true)
+        string? path = null;
+#if DEBUG
+        // Automated export tests: save straight to this path, without the dialog.
+        path = Environment.GetEnvironmentVariable("IMAGETO3D_TEST_SAVE");
+#endif
+        if (string.IsNullOrEmpty(path))
         {
-            Post(new { type = "file-cancelled", id });
-            return;
+            if (dlg.ShowDialog(this) != true)
+            {
+                Post(new { type = "file-cancelled", id });
+                return;
+            }
+            path = dlg.FileName;
         }
         try
         {
-            var fs = new FileStream(dlg.FileName, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 20);
-            _sinks[id] = (fs, dlg.FileName);
-            Post(new { type = "file-opened", id, path = dlg.FileName });
+            var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 20);
+            CoreWebView2SharedBuffer? shared = null;
+            try
+            {
+                shared = Web.CoreWebView2.Environment.CreateSharedBuffer(SharedBufferBytes);
+                Web.CoreWebView2.PostSharedBufferToScript(shared, CoreWebView2SharedBufferAccess.ReadWrite,
+                    JsonSerializer.Serialize(new { type = "file-buffer", id }));
+            }
+            catch (Exception ex)
+            {
+                // An older WebView2 Runtime: the chunks come as base64 messages instead.
+                Debug.WriteLine($"Shared buffer unavailable: {ex.Message}");
+                shared?.Dispose();
+                shared = null;
+            }
+            _sinks[id] = new Sink(fs, path, shared);
+            Post(new { type = "file-opened", id, path });
         }
         catch (Exception ex)
         {

@@ -30,7 +30,7 @@ const DEFAULTS = {
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
-  format: 'mp4', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
+  format: 'mp4', aviCodec: 'mjpg', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
 };
 /** Settings from older versions (sizes, chained intro / outro) brought up to date. */
 const migrate = s => migrateAnimationSettings(migrateSettings(s));
@@ -321,14 +321,16 @@ function exportDims() {
 }
 
 // Animated outputs share one path: video (MP4 / WebM) or a PNG sequence in a ZIP.
-const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', avi: 'vídeo AVI', pngseq: 'secuencia PNG' };
-// Formats without an alpha channel: a transparent background comes out black.
+const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', avi: 'vídeo AVI', 'avi-rgba': 'AVI sin compresión', pngseq: 'secuencia PNG' };
+// Outputs without an alpha channel: a transparent background comes out black.
 const NO_ALPHA = new Set(['mp4', 'avi']);
+/** What will be written: the format, with AVI split by codec (Motion JPEG or RGB + alpha). */
+const outputKind = () => state.format === 'avi' && state.aviCodec === 'rgba' ? 'avi-rgba' : state.format;
 
 async function runExport() {
   if (!logo || exporting) return;
   if (!logo.children.length) { toast(NO_SHAPE_MSG, 'error'); return; }
-  const fmt = state.format;
+  const fmt = state.format, kind = outputKind();
   try {
     if (fmt === 'glb') { const r = await exportGLB(logo, state.scale); download(r.blob, r.filename); return; }
     if (fmt === 'stl') { const r = exportSTL(logo, state.stlWidth); download(r.blob, r.filename); return; }
@@ -337,14 +339,14 @@ async function runExport() {
     const anim = getAnimation(state.anim);
     const fps = Number(state.fps), seconds = clipSeconds();
     let sink = null;
-    if (ANIMATED[fmt]) {
-      const support = await checkVideoSupport(stage.renderer, fmt, w, h, fps);
+    if (ANIMATED[kind]) {
+      const support = await checkVideoSupport(stage.renderer, kind, w, h, fps);
       if (!support.ok) { toast(support.reason, 'error'); return; }
       if (host.isDesktop) {
         // Where to save is asked first, then the file streams to disk as it renders.
-        sink = await openSink(animationFileName(fmt, w, h));
+        sink = await openSink(animationFileName(kind, w, h));
         if (!sink) return;
-      } else if (estimateBytes(fmt, w, h, fps, seconds, stage.transparent) > 1.5 * 1024 ** 3) {
+      } else if (estimateBytes(kind, w, h, fps, seconds, stage.transparent) > 1.5 * 1024 ** 3) {
         toast('Eso pasaría de 1,5 GB y en el navegador se monta entero en memoria. Acórtalo o usa la app de escritorio.', 'error');
         return;
       }
@@ -367,10 +369,10 @@ async function runExport() {
       const fit = fitLoop(anim, seconds, state.speed);
       const tl = currentTimeline();
       cancelExport = false;
-      showProgress(`Renderizando ${ANIMATED[fmt]}${stage.transparent && !NO_ALPHA.has(fmt) ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
+      showProgress(`Renderizando ${ANIMATED[kind]}${stage.transparent && !NO_ALPHA.has(kind) ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
       const job = {
-        canvas, renderer: stage.renderer, kind: fmt, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
+        canvas, renderer: stage.renderer, kind: fmt, codec: state.aviCodec, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
         renderFrame: (i, t) => {
           if (tl) tl.pose(t, stage.motion, logo.children);
           else poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
@@ -382,10 +384,10 @@ async function runExport() {
       try {
         const r = fmt === 'pngseq' ? await exportPngSequence(job) : fmt === 'avi' ? await exportAvi(job) : await exportVideo(job);
         if (!r) { await sink?.abort(); toast('Exportación cancelada'); return; }
-        rememberRenderRate(fmt, w * h * seconds * fps, performance.now() - started);
+        rememberRenderRate(kind, w * h * seconds * fps, performance.now() - started);
         updateExportEstimate();
         // Streamed files are announced by the host ("saved", with "Mostrar en carpeta").
-        if (r.blob) download(r.blob, animationFileName(fmt, w, h));
+        if (r.blob) download(r.blob, animationFileName(kind, w, h));
       } catch (e) {
         await sink?.abort().catch(() => {});
         throw e;
@@ -422,19 +424,22 @@ function rememberRenderRate(kind, pixels, ms) {
 
 const FORMAT_NOTES = {
   webm: 'Con el fondo «Transparente» el vídeo lleva canal alfa: navegadores, OBS, DaVinci Resolve, Shotcut, Kdenlive.',
-  pngseq: 'Una imagen PNG por fotograma, en un ZIP. Es la forma de llevar transparencia a Premiere, After Effects o DaVinci.',
+  pngseq: 'Una imagen PNG por fotograma, en un ZIP: transparencia sin pérdidas para Premiere, After Effects o DaVinci, y mucho más ligera que el AVI sin compresión.',
   avi: 'AVI con Motion JPEG: se abre en casi cualquier reproductor o editor, también en programas antiguos. Ocupa más que un MP4.',
+  'avi-rgba': 'Sin compresión, RGB + alfa (32 bits): lo mismo que After Effects con el códec «Ninguno» y Canales «RGB + alfa». After Effects, Premiere y DaVinci lo importan con la transparencia (si After Effects pregunta, alfa «Directo»). Ocupa mucho: unos 8 MB por fotograma en 1080p.',
 };
 
 /** Size / frames / time estimate and the hardware check, under the animation options. */
 async function updateExportEstimate() {
   const el = $('#export-estimate'), note = $('#format-note');
   if (!el) return;
-  const kind = state.format;
+  const kind = outputKind();
   note.textContent = FORMAT_NOTES[kind] || '';
   note.classList.remove('warn');
   if (stage.transparent && NO_ALPHA.has(kind)) {
-    note.textContent = `El ${kind === 'avi' ? 'AVI (Motion JPEG)' : 'MP4'} no admite transparencia: el fondo saldrá negro. Para conservarla usa WebM o Secuencia PNG.`;
+    note.textContent = kind === 'avi'
+      ? 'El AVI en Motion JPEG no admite transparencia: el fondo saldrá negro. Para conservarla elige «Sin compresión + alfa» (After Effects, Premiere, DaVinci).'
+      : 'El MP4 no admite transparencia: el fondo saldrá negro. Para conservarla usa WebM, AVI sin compresión o Secuencia PNG.';
     note.classList.add('warn');
   }
   if (!ANIMATED[kind]) return;
@@ -446,7 +451,7 @@ async function updateExportEstimate() {
   el.textContent = parts.join(' · ');
   el.classList.remove('warn');
   const support = await checkVideoSupport(stage.renderer, kind, w, h, fps);
-  if (state.format !== kind) return;
+  if (outputKind() !== kind) return;
   $('#btn-export').disabled = !support.ok;
   if (!support.ok) { el.textContent = support.reason; el.classList.add('warn'); }
 }
@@ -1158,6 +1163,7 @@ function init() {
   segmented('#format', 'format', syncExportOpts);
   initSize();
   segmented('#fps', 'fps', updateExportEstimate);
+  segmented('#avi-codec', 'aviCodec', updateExportEstimate);
 
   $('#color').value = state.color;
   $('#color').addEventListener('input', e => { state.color = e.target.value; applyMaterials(); save(); });

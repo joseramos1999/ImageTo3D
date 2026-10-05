@@ -60,6 +60,7 @@ export const videoBitrate = (width, height, fps) => Math.round(width * height * 
 export function estimateBytes(kind, width, height, fps, seconds, alpha) {
   if (kind === 'pngseq') return width * height * 0.6 * fps * seconds;
   if (kind === 'avi') return width * height * 0.06 * fps * seconds;   // JPEG at quality 0.92 (measured 0.035 on a dark plain background)
+  if (kind === 'avi-rgba') return (width * height * 4 + 32) * fps * seconds;   // uncompressed: exact
   return videoBitrate(width, height, fps) * seconds / 8 * (alpha ? 1.35 : 1);
 }
 
@@ -71,7 +72,7 @@ export async function checkVideoSupport(renderer, kind, width, height, fps) {
   if (Math.max(width, height) > maxRender) {
     return { ok: false, reason: `Tu tarjeta gráfica no puede renderizar a ${width}×${height} (máximo ${maxRender} px). Elige un tamaño menor.` };
   }
-  if (kind === 'pngseq' || kind === 'avi') return { ok: true };   // image encoders, no video codec needed
+  if (kind === 'pngseq' || kind.startsWith('avi')) return { ok: true };   // image encoders, no video codec needed
   if (typeof VideoEncoder === 'undefined') return { ok: false, reason: 'Este sistema no soporta codificación de vídeo (WebCodecs).' };
   const key = `${kind}:${width}x${height}@${fps}`;
   if (!supportCache.has(key)) supportCache.set(key, pickCodec(kind, width, height, fps, videoBitrate(width, height, fps)));
@@ -278,18 +279,49 @@ function memoryTarget() {
 }
 
 /**
- * The animation as an AVI with Motion-JPEG frames: opens in practically any player or
- * editor. JPEG has no alpha, so a transparent background comes out black.
+ * Reads the rendered frame back as an uncompressed 32-bit DIB: BGRA with straight alpha.
+ * WebGL already returns the rows bottom-up, the order a DIB with positive height uses;
+ * the colours come premultiplied and are divided back by the alpha.
  */
-export async function exportAvi({ canvas, width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null, quality = 0.92 }) {
+function readBgra(gl, width, height, pixels) {
+  gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  for (let s = 0; s < pixels.length; s += 4) {
+    const r = pixels[s], b = pixels[s + 2], a = pixels[s + 3];
+    if (a === 255) { pixels[s] = b; pixels[s + 2] = r; }
+    else if (a === 0) { pixels[s] = pixels[s + 1] = pixels[s + 2] = 0; }
+    else {
+      const k = 255 / a;
+      pixels[s] = Math.min(255, b * k);
+      pixels[s + 1] = Math.min(255, pixels[s + 1] * k);
+      pixels[s + 2] = Math.min(255, r * k);
+    }
+  }
+  return pixels;
+}
+
+/**
+ * The animation as an AVI. codec 'mjpg': Motion-JPEG frames, opens in practically any
+ * player or editor, but JPEG has no alpha so a transparent background comes out black.
+ * codec 'rgba': uncompressed RGB + alpha, like After Effects' «None» codec; keeps the
+ * transparency, at width·height·4 bytes per frame.
+ */
+export async function exportAvi({ canvas, renderer, codec = 'mjpg', width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null, quality = 0.92 }) {
   const memory = sink ? null : memoryTarget();
-  const avi = new AviWriter(sink ? (pos, bytes) => sink.write(pos, bytes) : memory.write, { width, height, fps });
+  const avi = new AviWriter(sink ? (pos, bytes) => sink.write(pos, bytes) : memory.write, { width, height, fps, codec });
   const total = Math.round(seconds * fps);
+  const gl = renderer?.getContext();
+  const pixels = codec === 'rgba' ? new Uint8Array(width * height * 4) : null;
   for (let i = 0; i < total; i++) {
     if (isCancelled()) return null;
     renderFrame(i, i / fps);
-    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
-    avi.addFrame(new Uint8Array(await blob.arrayBuffer()));
+    if (pixels) {
+      // The sink and the memory target copy what they are given, so one buffer serves all frames.
+      avi.addFrame(readBgra(gl, width, height, pixels));
+      if (i % 2 === 0) await new Promise(r => setTimeout(r, 0));
+    } else {
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
+      avi.addFrame(new Uint8Array(await blob.arrayBuffer()));
+    }
     if (sink) await sink.drain(32 * 1024 * 1024);
     onProgress((i + 1) / total);
   }
@@ -299,7 +331,7 @@ export async function exportAvi({ canvas, width, height, fps, seconds, renderFra
   return { blob: sink ? null : new Blob(memory.parts, { type: 'video/x-msvideo' }), path: sink?.path ?? null };
 }
 
-const EXT = { mp4: 'mp4', webm: 'webm', avi: 'avi', pngseq: 'zip' };
+const EXT = { mp4: 'mp4', webm: 'webm', avi: 'avi', 'avi-rgba': 'avi', pngseq: 'zip' };
 export const animationFileName = (kind, width, height) => `logo3d-${width}x${height}-${stamp()}.${EXT[kind]}`;
 
 export async function exportPNG({ canvas, renderFrame, width, height }) {

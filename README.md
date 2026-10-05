@@ -1,6 +1,6 @@
 # ImageTo3D
 
-App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4, WebM (con transparencia) o AVI, secuencia PNG, imagen PNG o modelo GLB/STL.
+App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4, WebM o AVI (los dos con transparencia), secuencia PNG, imagen PNG o modelo GLB/STL.
 
 Funciona sin conexión: todo se renderiza en local, con la GPU.
 
@@ -19,7 +19,7 @@ Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la �
 - **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
 - **Animación:** 112 animaciones (48 bucles, 34 intros y 29 salidas; algunas revelan el logo con planos de recorte) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 16 estilos **Predeterminados** que aplican la escena completa con un clic.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
-- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI (Motion JPEG, el más compatible) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
+- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI en Motion JPEG (el más compatible) o sin compresión con canal alfa (como el códec «Ninguno» con «RGB + alfa» de After Effects) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
 ## Arquitectura
 
@@ -37,7 +37,7 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/presets.js         16 estilos predeterminados
          ├─ js/sequence-ui.js     pestaña Secuencia: intro, bucle × N y salida
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
-         ├─ js/exporter.js        MP4 (H.264), WebM (VP9, con alfa), AVI (Motion JPEG, js/avi.js), secuencia PNG (js/zip.js), PNG, GLB, STL
+         ├─ js/exporter.js        MP4 (H.264), WebM (VP9, con alfa), AVI (Motion JPEG o RGBA sin compresión, OpenDML, js/avi.js), secuencia PNG (js/zip.js), PNG, GLB, STL
          ├─ js/formats.js         tamaños de salida predefinidos y personalizado
          ├─ js/filesink.js        escritura del vídeo a disco a través del host
          ├─ js/project.js         formato .i3d e historial de deshacer
@@ -59,7 +59,8 @@ El host en C# ([MainWindow.xaml.cs](src/ImageTo3D/MainWindow.xaml.cs) y [UpdateS
 - **Vídeo determinista.** Cada frame se renderiza en un instante exacto (`i / fps`) y se codifica con WebCodecs. No se pierden frames aunque el equipo sea lento.
 - **Bucle perfecto.** La velocidad se ajusta para que quepa un número entero de ciclos en la duración elegida. La cámara y las partículas también son periódicas en esa duración.
 - **La interfaz nunca se congela.** El trazado y la textura van en un Web Worker. Las imágenes de más de 100 MP se rechazan antes de decodificarse, y las que pasan de 4096 px se decodifican ya reducidas.
-- **Memoria plana al exportar.** En la app de escritorio el vídeo o el ZIP se escribe en el archivo mientras se codifica, no en memoria.
+- **Memoria plana al exportar.** En la app de escritorio el vídeo o el ZIP se escribe en el archivo mientras se codifica, no en memoria. Los trozos pasan por un búfer compartido con el host (`PostSharedBufferToScript`), sin base64: más de 1 GB/s, necesario para el AVI sin compresión (~8 MB por fotograma en 1080p).
+- **AVI de más de 2 GB.** El AVI se escribe como OpenDML (AVI 2.0): segmentos RIFF de hasta 1 GB con índices `ix00` y un superíndice `indx`, más un `idx1` clásico en el primero para lectores antiguos.
 - **WebM con transparencia sin soporte nativo.** WebCodecs no codifica alfa en Edge, así que se codifican dos flujos VP9 (color y alfa como luma) y el alfa se guarda como `BlockAdditional`, igual que hace Chrome por dentro. Requiere un parche de una línea en `vendor/webm-muxer`, comentado en el código.
 
 ## Desarrollo

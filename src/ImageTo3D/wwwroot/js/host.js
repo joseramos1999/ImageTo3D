@@ -7,6 +7,12 @@ webview?.addEventListener('message', e => {
   const msg = e.data;
   handlers.get(msg?.type)?.slice().forEach(fn => fn(msg));
 });
+// Memory shared with the host (streamed exports): dispatched like a message, with the
+// ArrayBuffer as `buffer`.
+webview?.addEventListener('sharedbufferreceived', e => {
+  const msg = { ...e.additionalData, buffer: e.getBuffer() };
+  handlers.get(msg.type)?.slice().forEach(fn => fn(msg));
+});
 
 export const host = {
   isDesktop: !!webview,
