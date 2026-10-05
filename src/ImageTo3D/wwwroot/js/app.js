@@ -6,7 +6,7 @@ import { decodeImage, previewBitmap, ImageTooLargeError, LIMITS } from './imagin
 import { pipeline } from './pipeline.js';
 import { initMaskUI } from './mask-ui.js';
 import { store } from './store.js';
-import { History, workSettings, serializeProject, parseProject, PROJECT_EXT } from './project.js';
+import { History, workSettings, serializeProject, readProjectFile, PROJECT_EXT } from './project.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, migrateAnimationSettings } from './animations.js';
 import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence-ui.js';
@@ -588,7 +588,7 @@ async function openProjectData(p, id, generation = ++openGeneration) {
 
 async function openProjectFile(file) {
   try {
-    const p = parseProject(await file.text());
+    const p = await readProjectFile(file);
     if (await openProjectData(p)) toast(`Proyecto «${p.name}» abierto`);
   } catch (e) {
     toast(e.message, 'error');
@@ -764,18 +764,34 @@ function initSliders() {
   });
 }
 
+/** Marks the picked option of a group: `.on` for the eye, aria-pressed for screen readers. */
+function markPicked(container, id) {
+  container.querySelectorAll(':scope > [data-id]').forEach(b => {
+    const on = b.dataset.id === id;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+
+/** A toggle button for a group of options (keyboard and screen reader friendly). */
+function optionButton(cls, id, picked) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls + (picked ? ' on' : '');
+  b.dataset.id = id;
+  b.setAttribute('aria-pressed', String(picked));
+  return b;
+}
+
 function chips(container, items, key, onPick, render = it => it.label) {
   const el = $(container);
   el.innerHTML = '';
   items.forEach(it => {
-    const b = document.createElement('button');
-    b.className = 'chip' + (state[key] === it.id ? ' on' : '');
-    b.dataset.id = it.id;
+    const b = optionButton('chip', it.id, state[key] === it.id);
     b.innerHTML = render(it);
     b.onclick = () => {
       state[key] = it.id;
-      el.querySelectorAll('.on').forEach(x => x.classList.remove('on'));
-      b.classList.add('on');
+      markPicked(el, it.id);
       onPick(it);
       save();
     };
@@ -787,7 +803,11 @@ const segSyncs = [];   // re-read state into every segmented control
 
 function segmented(id, key, onPick = () => {}) {
   const el = $(id);
-  const sync = () => el.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(state[key])));
+  const sync = () => el.querySelectorAll('button').forEach(b => {
+    const on = b.dataset.v === String(state[key]);
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
   segSyncs.push(sync);
   el.querySelectorAll('button').forEach(b => b.onclick = () => { state[key] = b.dataset.v; sync(); onPick(b.dataset.v); save(); });
   sync();
@@ -797,14 +817,13 @@ function initMaterials() {
   const el = $('#materials');
   el.innerHTML = '';
   MATERIALS.forEach(m => {
-    const b = document.createElement('div');
-    b.className = 'swatch' + (state.material === m.id ? ' on' : '');
-    b.dataset.id = m.id;
-    b.innerHTML = `<i style="background:${m.swatch}"></i>${m.label}`;
+    const b = optionButton('swatch', m.id, state.material === m.id);
+    const dot = document.createElement('i');
+    dot.style.background = m.swatch;
+    b.append(dot, m.label);
     b.onclick = () => {
       state.material = m.id;
-      el.querySelectorAll('.on').forEach(x => x.classList.remove('on'));
-      b.classList.add('on');
+      markPicked(el, m.id);
       applyMaterials();
       syncColorRows();
       save();
@@ -918,8 +937,11 @@ function renderPresets() {
   el.innerHTML = '';
   PRESETS.forEach(p => {
     const card = document.createElement('button');
-    card.className = 'preset' + (matchesPreset(p, state) ? ' on' : '');
+    const picked = matchesPreset(p, state);
+    card.type = 'button';
+    card.className = 'preset' + (picked ? ' on' : '');
     card.dataset.id = p.id;
+    card.setAttribute('aria-pressed', String(picked));
     card.innerHTML = `<span class="thumb">${thumbs.has(p.id) ? `<img src="${thumbs.get(p.id)}" alt="">` : ''}</span><span class="name">${p.label}</span>`;
     card.onclick = () => applyPreset(p);
     el.appendChild(card);
@@ -938,14 +960,15 @@ function applyPreset(p) {
 
 /** Re-reads `state` into every scene control after many keys changed at once. */
 function syncSceneUI() {
-  const mark = (sel, value) => document.querySelectorAll(sel).forEach(e => e.classList.toggle('on', e.dataset.id === value));
-  mark('#materials .swatch', state.material);
-  mark('#lighting .chip', state.lighting);
-  mark('#floors .chip', state.floor);
-  mark('#cameras .chip', state.camMove);
-  mark('#backgrounds .bg', state.bg);
+  markPicked($('#materials'), state.material);
+  markPicked($('#lighting'), state.lighting);
+  markPicked($('#floors'), state.floor);
+  markPicked($('#cameras'), state.camMove);
+  markPicked($('#backgrounds'), state.bg);
   if (state.animTab === 'preset') document.querySelectorAll('#animations .preset').forEach(card => {
-    card.classList.toggle('on', matchesPreset(PRESETS.find(p => p.id === card.dataset.id), state));
+    const on = matchesPreset(PRESETS.find(p => p.id === card.dataset.id), state);
+    card.classList.toggle('on', on);
+    card.setAttribute('aria-pressed', String(on));
   });
   else renderAnimationList();
   Object.values(sliderSync).forEach(fn => fn());
@@ -1047,15 +1070,13 @@ function syncLightPad() {
 function initBackgrounds() {
   const el = $('#backgrounds');
   BACKGROUNDS.forEach(bg => {
-    const b = document.createElement('div');
-    b.className = 'bg' + (state.bg === bg.id ? ' on' : '');
-    b.dataset.id = bg.id;
+    const b = optionButton('bg', bg.id, state.bg === bg.id);
     b.style.background = bg.css;
-    b.title = bg.id;
+    b.title = bg.label;
+    b.setAttribute('aria-label', bg.label);
     b.onclick = () => {
       state.bg = bg.id;
-      el.querySelectorAll('.on').forEach(x => x.classList.remove('on'));
-      b.classList.add('on');
+      markPicked(el, bg.id);
       stage.setBackground(bg.spec);
       syncTransparency();
       save();

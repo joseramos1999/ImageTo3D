@@ -85,7 +85,12 @@ export function initUpdates({ toast, beforeInstall, isBusy }) {
     panel.setAttribute('aria-label', 'Nueva versión disponible');
 
     const title = el('div', 'up-title', `Nueva versión ${msg.version}`);
-    const sub = el('div', 'up-sub', `Tienes la ${msg.current}. La actualización tarda menos de un minuto y conserva tus proyectos.`);
+    // A release without a published SHA-256 cannot be checked, so it is not installed from
+    // here (the host refuses it too): the button opens its page on GitHub instead.
+    const verified = msg.verified !== false;
+    const sub = el('div', 'up-sub', verified
+      ? `Tienes la ${msg.current}. La actualización tarda menos de un minuto y conserva tus proyectos.`
+      : `Tienes la ${msg.current}. Esta versión no publica su huella SHA-256, así que no se puede comprobar ni instalar automáticamente: descárgala desde su página de GitHub.`);
     const notes = el('div', 'up-notes');
     notes.append(...notesNodes(msg.notes));
     notes.hidden = true;
@@ -100,10 +105,11 @@ export function initUpdates({ toast, beforeInstall, isBusy }) {
     status.id = 'up-status';
     status.setAttribute('aria-live', 'polite');
 
-    const update = el('button', 'btn primary small', 'Actualizar ahora');
+    const update = el('button', 'btn primary small', verified ? 'Actualizar ahora' : 'Abrir la página de descarga');
     const later = el('button', 'btn small', 'Más tarde');
     const skip = el('button', 'up-link', 'Omitir esta versión');
     update.onclick = async () => {
+      if (!verified) { host.post({ type: 'open-release' }); panel.remove(); return; }
       if (isBusy()) { toast('Espera a que termine la exportación para actualizar.', 'error'); return; }
       setPanelBusy(true);
       status.textContent = 'Guardando tu trabajo…';

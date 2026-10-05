@@ -95,7 +95,7 @@
 
       <section class="sec">
         <h2>Material</h2>
-        <div class="chips swatches" id="materials"></div>
+        <div class="chips swatches" id="materials" role="group" aria-label="Material"></div>
         <div class="row" id="color-row">
           <label>Color</label>
           <input type="color" id="color">
@@ -133,7 +133,7 @@
       <section class="sec">
         <h2>Escena</h2>
         <label class="sub">Iluminación</label>
-        <div class="chips" id="lighting"></div>
+        <div class="chips" id="lighting" role="group" aria-label="Iluminación"></div>
         <div class="slider" data-key="lightGain" data-label="Intensidad" data-min="0.3" data-max="2" data-step="0.05" data-fmt="%"></div>
         <label class="sub">Dirección de la luz <span class="hint-inline">arrastra · doble clic para centrar</span></label>
         <div class="light-pad" id="light-pad" tabindex="0" role="slider" aria-label="Dirección de la luz (flechas para mover)">
@@ -142,11 +142,11 @@
           <span class="light-read" id="light-read"></span>
         </div>
         <label class="sub">Suelo</label>
-        <div class="chips" id="floors"></div>
+        <div class="chips" id="floors" role="group" aria-label="Suelo"></div>
         <label class="sub">Fondo</label>
-        <div class="bgs" id="backgrounds"></div>
+        <div class="bgs" id="backgrounds" role="group" aria-label="Fondo"></div>
         <label class="sub">Cámara</label>
-        <div class="chips" id="cameras"></div>
+        <div class="chips" id="cameras" role="group" aria-label="Movimiento de cámara"></div>
         <div class="slider" data-key="camAmount" data-label="Intensidad del movimiento" data-min="0.2" data-max="2" data-step="0.05" data-fmt="%"></div>
         <div class="slider" data-key="bloom" data-label="Brillo (bloom)" data-min="0" data-max="1.5" data-step="0.05" data-fmt="off"></div>
         <div class="slider" data-key="bloomTh" data-label="Umbral bloom" data-min="0" data-max="1" data-step="0.01"></div>

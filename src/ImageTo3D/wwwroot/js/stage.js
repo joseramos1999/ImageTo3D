@@ -43,20 +43,20 @@ export const CAMERA_MOVES = [
 ];
 
 export const BACKGROUNDS = [
-  { id: 'vignette', css: 'radial-gradient(#23242e,#07070a)', spec: { type: 'radial', a: '#23242e', b: '#060609' } },
-  { id: 'black', css: '#050507', spec: { type: 'solid', a: '#050507' } },
-  { id: 'white', css: '#f4f4f6', spec: { type: 'radial', a: '#ffffff', b: '#d9dae0' } },
-  { id: 'graphite', css: '#2a2b30', spec: { type: 'solid', a: '#2a2b30' } },
-  { id: 'indigo', css: 'radial-gradient(#5a3ff0,#1a0f5c)', spec: { type: 'radial', a: '#5a3ff0', b: '#140b47' } },
-  { id: 'blue', css: 'linear-gradient(160deg,#2b6cff,#0a1a4a)', spec: { type: 'linear', a: '#2b6cff', b: '#0a1a4a' } },
-  { id: 'teal', css: 'linear-gradient(160deg,#2dd4bf,#0b3b4a)', spec: { type: 'linear', a: '#2dd4bf', b: '#0b3b4a' } },
-  { id: 'sunset', css: 'linear-gradient(160deg,#ff9a5a,#7a1f5c)', spec: { type: 'linear', a: '#ff9a5a', b: '#5a1546' } },
-  { id: 'pink', css: 'radial-gradient(#ff7aa8,#7a1238)', spec: { type: 'radial', a: '#ff7aa8', b: '#5e0d2b' } },
-  { id: 'lime', css: '#c8f55a', spec: { type: 'radial', a: '#d8ff7a', b: '#8fb52a' } },
-  { id: 'cream', css: '#f5ead6', spec: { type: 'radial', a: '#fff8ea', b: '#e2d2b4' } },
-  { id: 'green', css: '#00b140', spec: { type: 'solid', a: '#00b140' } },   // chroma key
+  { id: 'vignette', label: 'Viñeta', css: 'radial-gradient(#23242e,#07070a)', spec: { type: 'radial', a: '#23242e', b: '#060609' } },
+  { id: 'black', label: 'Negro', css: '#050507', spec: { type: 'solid', a: '#050507' } },
+  { id: 'white', label: 'Blanco', css: '#f4f4f6', spec: { type: 'radial', a: '#ffffff', b: '#d9dae0' } },
+  { id: 'graphite', label: 'Grafito', css: '#2a2b30', spec: { type: 'solid', a: '#2a2b30' } },
+  { id: 'indigo', label: 'Índigo', css: 'radial-gradient(#5a3ff0,#1a0f5c)', spec: { type: 'radial', a: '#5a3ff0', b: '#140b47' } },
+  { id: 'blue', label: 'Azul', css: 'linear-gradient(160deg,#2b6cff,#0a1a4a)', spec: { type: 'linear', a: '#2b6cff', b: '#0a1a4a' } },
+  { id: 'teal', label: 'Turquesa', css: 'linear-gradient(160deg,#2dd4bf,#0b3b4a)', spec: { type: 'linear', a: '#2dd4bf', b: '#0b3b4a' } },
+  { id: 'sunset', label: 'Atardecer', css: 'linear-gradient(160deg,#ff9a5a,#7a1f5c)', spec: { type: 'linear', a: '#ff9a5a', b: '#5a1546' } },
+  { id: 'pink', label: 'Rosa', css: 'radial-gradient(#ff7aa8,#7a1238)', spec: { type: 'radial', a: '#ff7aa8', b: '#5e0d2b' } },
+  { id: 'lime', label: 'Lima', css: '#c8f55a', spec: { type: 'radial', a: '#d8ff7a', b: '#8fb52a' } },
+  { id: 'cream', label: 'Crema', css: '#f5ead6', spec: { type: 'radial', a: '#fff8ea', b: '#e2d2b4' } },
+  { id: 'green', label: 'Verde croma', css: '#00b140', spec: { type: 'solid', a: '#00b140' } },   // chroma key
   // Checkerboard in the UI; renders with alpha 0 around the logo (PNG, WebM and PNG sequence keep it).
-  { id: 'transparent', css: 'repeating-conic-gradient(#3a3a46 0 25%, #22222a 0 50%) 0 0 / 10px 10px', spec: { type: 'transparent' } },
+  { id: 'transparent', label: 'Transparente', css: 'repeating-conic-gradient(#3a3a46 0 25%, #22222a 0 50%) 0 0 / 10px 10px', spec: { type: 'transparent' } },
 ];
 
 function gradientCanvas(spec, w = 1024, h = 1024) {

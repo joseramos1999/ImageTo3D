@@ -62,9 +62,11 @@ public sealed class UpdateService
             var url = asset.GetProperty("browser_download_url").GetString() ?? "";
             if (TestUrl == null && !url.StartsWith("https://github.com/joseramos1999/ImageTo3D/releases/download/", StringComparison.OrdinalIgnoreCase))
                 continue;   // only ever download from this project's own releases
+            // Without a well-formed SHA-256 the release is still announced, but it is never
+            // installed automatically (DownloadAsync refuses it): the user is sent to its page.
             string? sha = null;
             if (asset.TryGetProperty("digest", out var digest) && digest.GetString() is { } d &&
-                d.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                d.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) && IsSha256(d[7..]))
                 sha = d[7..].ToLowerInvariant();
             return new Release(version, tag,
                 root.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "",
@@ -74,9 +76,20 @@ public sealed class UpdateService
         return null;
     }
 
-    /// <summary>Downloads the installer to %TEMP% and verifies its size and SHA-256.</summary>
+    private static bool IsSha256(string hex) => hex.Length == 64 && hex.All(Uri.IsHexDigit);
+
+    /// <summary>True for this project's release pages on GitHub (the only pages the app opens).</summary>
+    public static bool IsReleasePage(string url) =>
+        url.StartsWith("https://github.com/joseramos1999/ImageTo3D/releases/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Downloads the installer to %TEMP% and verifies its size and SHA-256. A release without
+    /// a published SHA-256 is refused before anything is downloaded.
+    /// </summary>
     public async Task<string> DownloadAsync(Release release, IProgress<double> progress, CancellationToken ct = default)
     {
+        if (release.Sha256 == null || !IsSha256(release.Sha256))
+            throw new InvalidDataException("GitHub no publica la huella SHA-256 de este instalador y no se puede verificar. Descárgalo desde la página de la versión.");
         var dir = Path.Combine(Path.GetTempPath(), "ImageTo3D-update");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, Path.GetFileName(release.AssetName));
@@ -101,12 +114,10 @@ public sealed class UpdateService
         var size = new FileInfo(partial).Length;
         if (release.AssetSize > 0 && size != release.AssetSize)
             Fail(partial, $"la descarga está incompleta ({size} de {release.AssetSize} bytes)");
-        if (release.Sha256 != null)
-        {
-            await using var fs = File.OpenRead(partial);
-            var hash = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-            if (hash != release.Sha256) Fail(partial, "la huella SHA-256 no coincide con la publicada");
-        }
+        string hash;
+        await using (var fs = File.OpenRead(partial))
+            hash = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+        if (hash != release.Sha256) Fail(partial, "la huella SHA-256 no coincide con la publicada");
         File.Move(partial, path, overwrite: true);
         return path;
     }

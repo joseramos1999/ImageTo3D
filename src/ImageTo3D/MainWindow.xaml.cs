@@ -48,6 +48,14 @@ public partial class MainWindow : Window
             Close();
             return;
         }
+        catch (Exception ex)
+        {
+            // The local profile could not be created or opened: no permission, disk full,
+            // a damaged cache... Retrying runs the whole WebView2 setup again.
+            Debug.WriteLine($"WebView2 init failed: {ex}");
+            ShowError($"No se pudo iniciar el componente WebView2: {ex.Message}\n\nComprueba que hay espacio libre en el disco y permisos en %LOCALAPPDATA%\\ImageTo3D.");
+            return;
+        }
 
         var core = Web.CoreWebView2;
         var root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -65,6 +73,10 @@ public partial class MainWindow : Window
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsZoomControlEnabled = false;
 
+        // The WebView only ever shows the engine: any other page is refused, and so are pop-ups.
+        core.NavigationStarting += (_, e) => { if (!IsAppPage(e.Uri)) e.Cancel = true; };
+        core.FrameNavigationStarting += (_, e) => { if (!IsAppPage(e.Uri)) e.Cancel = true; };
+        core.NewWindowRequested += (_, e) => e.Handled = true;
         core.DownloadStarting += OnDownloadStarting;
         core.WebMessageReceived += OnWebMessage;
         core.NavigationCompleted += OnNavigationCompleted;
@@ -125,6 +137,13 @@ public partial class MainWindow : Window
     private void OnRetry(object sender, RoutedEventArgs e)
     {
         if (Web.CoreWebView2 != null) Navigate();
+        else
+        {
+            // WebView2 never started (see InitWebViewAsync): try the whole setup again.
+            ErrorPanel.Visibility = Visibility.Collapsed;
+            Splash.Visibility = Visibility.Visible;
+            _ = InitWebViewAsync();
+        }
     }
 
     // Every export in the engine ends in a blob download; intercept it so the user gets
@@ -167,8 +186,19 @@ public partial class MainWindow : Window
         });
     }
 
+    /// <summary>True only for pages of the engine itself (https://app.imageto3d/...).</summary>
+    private static bool IsAppPage(string? uri) =>
+        Uri.TryCreate(uri, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps &&
+        string.Equals(u.Host, Host, StringComparison.OrdinalIgnoreCase) && u.IsDefaultPort;
+
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        // Messages open save dialogs and write files: only the engine's own page may send them.
+        if (!IsAppPage(e.Source))
+        {
+            Debug.WriteLine($"Message from an unexpected page ignored: {e.Source}");
+            return;
+        }
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
@@ -202,6 +232,11 @@ public partial class MainWindow : Window
                     break;
                 case "update-install":
                     _ = InstallUpdateAsync();
+                    break;
+                case "open-release":
+                    // Only the page of the version on offer, and only on this project's GitHub.
+                    if (_available is { } offered && UpdateService.IsReleasePage(offered.PageUrl))
+                        Process.Start(new ProcessStartInfo(offered.PageUrl) { UseShellExecute = true });
                     break;
                 case "engine-error":
                     ShowError("El motor 3D no pudo arrancar: " + (msg.GetProperty("message").GetString() ?? "error desconocido"));
