@@ -27,7 +27,24 @@ export function sequenceTimeline(state) {
   const p = sequenceParts(state);
   const reps = Math.max(1, Math.min(SEQ_MAX_REPS, Math.round(state.seqReps || 1)));
   return timelineOf({ intro: p.intro, loop: p.loop, outro: p.outro, reps, hold: p.still ? reps : 0, speed: state.speed,
+    loopSpeed: state.seqLoopSpeed ?? 1,
     transition: state.seqTransition ?? DEFAULT_TRANSITION });
+}
+
+/** A labelled range like the panel's other sliders; `commit` runs when the drag ends. */
+function slider(cls, title, aria, { min, max, step }, value, format, commit) {
+  const wrap = el('div', `slider ${cls}`);
+  const head = el('div', 'lbl');
+  const shown = el('span', null, format(value));
+  head.append(el('span', null, title), shown);
+  const range = Object.assign(document.createElement('input'), { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value) });
+  range.setAttribute('aria-label', aria);
+  const paint = () => { range.style.setProperty('--p', ((range.value - min) / (max - min) * 100) + '%'); shown.textContent = format(Number(range.value)); };
+  paint();
+  range.addEventListener('input', paint);
+  range.addEventListener('change', () => commit(Number(range.value)));
+  wrap.append(head, range);
+  return wrap;
 }
 
 function select(options, value, label) {
@@ -50,12 +67,11 @@ export function renderSequencePanel(container, state, { change, use }) {
   const parts = sequenceParts(state);
   const active = state.mode === 'sequence';
 
-  const slot = (n, title, cls, control, seconds, extra) => {
+  const slot = (n, title, cls, control, seconds, ...extra) => {
     const row = el('div', `seq-slot ${cls}`);
     const head = el('div', 'seq-head');
     head.append(el('span', 'seq-num', String(n)), el('span', 'seq-title', title), el('span', 'seq-dur', seconds > 0 ? secs(seconds) : '—'));
-    row.append(head, control);
-    if (extra) row.append(extra);
+    row.append(head, control, ...extra);
     return row;
   };
 
@@ -80,6 +96,13 @@ export function renderSequencePanel(container, state, { change, use }) {
   stepper.append(el('span', 'seq-reps-label', parts.loop ? 'Repeticiones' : 'Segundos quieto'), minus, count, plus);
   stepper.hidden = !parts.loop && !parts.still;
 
+  // The loop's own speed, on top of the general «Velocidad» (which also moves intro and outro).
+  // Repetitions stay whole, so a faster loop makes its part of the clip shorter.
+  const loopSpeed = slider('seq-speed', 'Velocidad del bucle', 'Velocidad del bucle',
+    { min: 0.25, max: 3, step: 0.05 }, state.seqLoopSpeed ?? 1,
+    v => v.toFixed(2) + 'x', v => change({ seqLoopSpeed: v }));
+  loopSpeed.hidden = !parts.loop;
+
   const outroSel = select([['none', 'Sin salida'], ...byKind('outro')], state.seqOutro, 'Salida');
   outroSel.onchange = () => change({ seqOutro: outroSel.value });
 
@@ -96,18 +119,9 @@ export function renderSequencePanel(container, state, { change, use }) {
   }
 
   // Transition: how long each join between parts eases in / out (0 = hard cut)
-  const trans = el('div', 'slider seq-trans');
-  const tv = state.seqTransition ?? DEFAULT_TRANSITION;
-  const head = el('div', 'lbl');
-  const tLabel = el('span', null, 'Transición entre partes'), tValue = el('span', null, tv > 0 ? secs(tv) : 'Corte seco');
-  head.append(tLabel, tValue);
-  const range = Object.assign(document.createElement('input'), { type: 'range', min: '0', max: '1.5', step: '0.05', value: String(tv) });
-  range.setAttribute('aria-label', 'Transición entre partes, en segundos');
-  const paint = () => { range.style.setProperty('--p', (range.value / 1.5 * 100) + '%'); tValue.textContent = Number(range.value) > 0 ? secs(Number(range.value)) : 'Corte seco'; };
-  paint();
-  range.addEventListener('input', paint);
-  range.addEventListener('change', () => change({ seqTransition: Number(range.value) }));
-  trans.append(head, range);
+  const trans = slider('seq-trans', 'Transición entre partes', 'Transición entre partes, en segundos',
+    { min: 0, max: 1.5, step: 0.05 }, state.seqTransition ?? DEFAULT_TRANSITION,
+    v => v > 0 ? secs(v) : 'Corte seco', v => change({ seqTransition: v }));
   trans.hidden = !(parts.loop && (parts.intro || parts.outro));   // only joins next to a loop are eased
 
   const foot = el('div', 'seq-foot');
@@ -119,7 +133,7 @@ export function renderSequencePanel(container, state, { change, use }) {
 
   container.replaceChildren(
     slot(1, 'Intro', 'intro', introSel, tl.introSecs),
-    slot(2, 'Bucle', 'loop', loopSel, tl.mid, stepper),
+    slot(2, 'Bucle', 'loop', loopSel, tl.mid, stepper, loopSpeed),
     slot(3, 'Salida', 'outro', outroSel, tl.outroSecs),
     bar, trans, foot,
   );

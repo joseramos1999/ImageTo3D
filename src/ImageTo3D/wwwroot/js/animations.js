@@ -845,7 +845,9 @@ function easedLoopTime(u, mid, inT, outT) {
   return Math.max(0, tau) * (span > 0 ? mid / span : 1);
 }
 
-export function timelineOf({ intro = null, loop = null, outro = null, clip, speed, reps = null, hold = 0, transition = DEFAULT_TRANSITION }) {
+export function timelineOf({ intro = null, loop = null, outro = null, clip, speed, loopSpeed = 1, reps = null, hold = 0, transition = DEFAULT_TRANSITION }) {
+  // `loopSpeed` speeds up the loop only, on top of `speed` (which applies to every part).
+  const ls = speed * loopSpeed;
   const introSecs = intro ? intro.duration / speed : 0;
   const outroSecs = outro ? outro.duration / speed : 0;
   // Built from parts (the "Secuencia" tab): the loop runs exactly `reps` times — or, with no
@@ -853,12 +855,12 @@ export function timelineOf({ intro = null, loop = null, outro = null, clip, spee
   // Otherwise the parts are fitted into a given `clip` length.
   let mid, fit;
   if (reps != null) {
-    mid = loop ? reps * loop.period / speed : Math.max(0, hold);
-    fit = loop ? { speed, cycles: reps } : null;
+    mid = loop ? reps * loop.period / ls : Math.max(0, hold);
+    fit = loop ? { speed: ls, cycles: reps } : null;
     clip = introSecs + mid + outroSecs;
   } else {
     mid = Math.max(0, clip - introSecs - outroSecs);
-    fit = loop && mid > 0 ? fitLoop(loop, mid, speed) : null;
+    fit = loop && mid > 0 ? fitLoop(loop, mid, ls) : null;
   }
   return {
     introSecs, mid, outroSecs, fit, clip,

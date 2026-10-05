@@ -26,7 +26,7 @@ const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
   anim: 'rotate-y', animTab: 'preset', speed: 1,
-  mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6,
+  mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
@@ -1115,7 +1115,7 @@ function updateLoopNote() {
     // Sequence: the length comes from its parts.
     const p = sequenceParts(state), parts = [];
     if (p.intro) parts.push(`intro ${s(tl.introSecs)}`);
-    if (p.loop) parts.push(`«${p.loop.label}» × ${state.seqReps} (${s(tl.mid)})`);
+    if (p.loop) parts.push(`«${p.loop.label}» × ${state.seqReps}${(state.seqLoopSpeed ?? 1) !== 1 ? ` a ${state.seqLoopSpeed.toFixed(2)}x` : ''} (${s(tl.mid)})`);
     else if (p.still && tl.mid > 0) parts.push(`quieto ${s(tl.mid)}`);
     if (p.outro) parts.push(`salida ${s(tl.outroSecs)}`);
     el.textContent = parts.length

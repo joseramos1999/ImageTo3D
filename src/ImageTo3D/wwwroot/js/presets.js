@@ -55,10 +55,11 @@ const RAW = [
     set: { mode: 'sequence', seqIntro: 'intro-boomerang', seqLoop: 'flag', seqReps: 2, seqOutro: 'outro-wind', seqTransition: 0.6, material: 'ocean', lighting: 'sunset', floor: 'shadow', bg: 'sunset', camMove: 'sway' } },
 ];
 
-export const PRESETS = RAW.map(p => ({ ...p, set: { ...BASE, ...p.set } }));
+// Sequence presets play their loop at its normal speed unless they say otherwise.
+export const PRESETS = RAW.map(p => ({ ...p, set: { ...BASE, ...(p.set.mode === 'sequence' ? { seqLoopSpeed: 1 } : {}), ...p.set } }));
 export const PRESET_KEYS = Object.keys(BASE);
 // A sequence preset also fixes its parts; a single-animation preset leaves the user's sequence alone.
-const SEQ_KEYS = ['seqIntro', 'seqLoop', 'seqReps', 'seqOutro', 'seqTransition'];
+const SEQ_KEYS = ['seqIntro', 'seqLoop', 'seqReps', 'seqOutro', 'seqTransition', 'seqLoopSpeed'];
 
 /** True when the current state is exactly this preset (so its card shows as selected). */
 export function matchesPreset(preset, state) {
