@@ -103,6 +103,8 @@ Qué hace el instalador ([installer/ImageTo3D.iss](installer/ImageTo3D.iss)):
 - Las actualizaciones se instalan encima (mismo `AppId`), cierran la app si está abierta y conservan los recientes.
 - El desinstalador también borra `%LOCALAPPDATA%\ImageTo3D`: la caché, los ajustes y la lista de recientes. Los `.i3d` guardados por el usuario no se tocan.
 
+Para probar el código actual en tu propio PC, doble clic en `Instalar en este PC.bat` (o `Compilar-ImageTo3D.ps1 -Instalar`): hace lo mismo, instala el resultado encima de la versión que tengas (para tu usuario, o para todos si la tenías así, y entonces Windows pide permiso) y abre la app.
+
 `-SinInstalador` solo publica. El icono se regenera con `tools/make-icon.ps1`.
 
 ## Licencias de terceros

@@ -2,9 +2,11 @@
 # Uso:  .\Compilar-ImageTo3D.ps1              -> publica y crea build\installer\ImageTo3D-Setup-<version>.exe
 #       .\Compilar-ImageTo3D.ps1 -SinInstalador -> solo publica en build\publish
 #       .\Compilar-ImageTo3D.ps1 -CerrarApp    -> cierra ImageTo3D si está abierto, sin preguntar
+#       .\Compilar-ImageTo3D.ps1 -Instalar     -> además lo instala en este PC y lo abre
 param(
     [switch]$SinInstalador,
-    [switch]$CerrarApp
+    [switch]$CerrarApp,
+    [switch]$Instalar
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,10 +41,11 @@ if ($abierta) {
 }
 
 $crono = [Diagnostics.Stopwatch]::StartNew()
+$pasos = if ($Instalar) { 3 } else { 2 }
 
 # --- Publicación ---
 Write-Host ""
-Write-Host "[1/2] Publicando (autocontenido, no necesita .NET instalado)..." -ForegroundColor Cyan
+Write-Host "[1/$pasos] Publicando (autocontenido, no necesita .NET instalado)..." -ForegroundColor Cyan
 if (Test-Path $publish) {
     try { Remove-Item $publish -Recurse -Force -ErrorAction Stop }
     catch {
@@ -65,7 +68,7 @@ if ($SinInstalador) { Write-Host ""; Write-Host "LISTO (sin instalador)." -Foreg
 
 # --- Instalador ---
 Write-Host ""
-Write-Host "[2/2] Generando el instalador..." -ForegroundColor Cyan
+Write-Host "[2/$pasos] Generando el instalador..." -ForegroundColor Cyan
 $iscc = @(
     (Get-Command iscc -ErrorAction SilentlyContinue | ForEach-Object Source),
     "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
@@ -81,6 +84,26 @@ if (-not $iscc) {
 if ($LASTEXITCODE -ne 0) { Write-Host "ERROR al generar el instalador." -ForegroundColor Red; Salir 1 }
 
 $setup = Join-Path $dir "build\installer\ImageTo3D-Setup-$version.exe"
+
+# --- Instalación en este PC ---
+if ($Instalar) {
+    Write-Host ""
+    Write-Host "[3/3] Instalando en este PC..." -ForegroundColor Cyan
+    # Encima de la instalación que ya haya: para todos los usuarios solo si es la única que existe
+    # (entonces Windows pedirá permiso de administrador); si no, para tu usuario.
+    $porUsuario = Join-Path $env:LOCALAPPDATA 'Programs\ImageTo3D\ImageTo3D.exe'
+    $paraTodos  = Join-Path $env:ProgramFiles 'ImageTo3D\ImageTo3D.exe'
+    $todos = (Test-Path $paraTodos) -and -not (Test-Path $porUsuario)
+    $ambito = if ($todos) { '/ALLUSERS' } else { '/CURRENTUSER' }
+    $instalado = if ($todos) { $paraTodos } else { $porUsuario }
+    $proc = Start-Process $setup -ArgumentList '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', $ambito -PassThru -Wait
+    if ($proc.ExitCode -ne 0 -or -not (Test-Path $instalado)) {
+        Write-Host "ERROR al instalar (código $($proc.ExitCode))." -ForegroundColor Red
+        Salir 1
+    }
+    Write-Host "  Instalada la versión $((Get-Item $instalado).VersionInfo.ProductVersion -replace '\+.*$', '') en $(Split-Path $instalado)" -ForegroundColor Green
+    Start-Process $instalado
+}
 $crono.Stop()
 Write-Host ""
 Write-Host "LISTO en $([math]::Round($crono.Elapsed.TotalSeconds, 1)) s" -ForegroundColor Green
