@@ -238,6 +238,11 @@ input[type=color] {
 .editor-stage canvas { max-width: 100%; max-height: 100%; touch-action: none; cursor: crosshair; }
 .editor-stage canvas.picking { cursor: pointer; }
 .mask-actions { justify-content: space-between; }
+.editor-split { display: grid; grid-template-columns: 1fr 300px; gap: 10px; min-height: 0; }
+.editor-preview { display: grid; align-content: start; gap: 6px; }
+.editor-preview canvas { width: 100%; height: auto; border-radius: 10px; background: #0b0b10; }
+@media (max-width: 900px) { .editor-split { grid-template-columns: 1fr; } .editor-preview { display: none; } }
+#relief-opts .btn { margin-top: 8px; }
 .bar { height: 6px; border-radius: 6px; background: #24242e; overflow: hidden; }
 #progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .1s; }
 .modal-row { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

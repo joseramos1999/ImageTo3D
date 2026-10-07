@@ -2,8 +2,10 @@
 // The colour texture they carry is built by colormap.js, in the pipeline worker.
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+import { buildRelief, appendGeometry } from './relief.js';
 
 export const LOGO_SIZE = 4;   // world units across the longest side of the logo
+const RELIEF_CELL = LOGO_SIZE / 220;   // grid of the relief surface (~220 points across)
 
 /** Outlines in field coordinates → normalised THREE.Shapes plus the mapping back
  *  to texture space. Y is flipped (image rows run down, world Y runs up). */
@@ -54,7 +56,8 @@ function planarUV(uvOf) {
 /**
  * Builds the logo: a Group with one Mesh per outline. Each mesh is centred on its
  * own pivot (userData.home) so per-piece animations can move pieces individually.
- * opts: { depth, bevel, smoothness, layerStyle? }
+ * opts: { depth, bevel, smoothness, layerStyle?, relief? }
+ * relief: { mode, amount, edge, both, sample(u, v) } — see relief.js
  * layerStyle(layer) → { depth: multiplier, visible } for colour / SVG layers: a thicker layer
  * grows toward the front only, so every layer keeps the same back plane.
  */
@@ -91,6 +94,11 @@ export function buildLogoGroup(shapeSet, opts) {
     geo = toCreasedNormals(geo, THREE.MathUtils.degToRad(35));
     flattenCaps(geo);
     geo.computeBoundingBox();
+    if (opts.relief && opts.relief.mode !== 'none') {
+      // The faces sit at the extremes in z (the bevel stays between them).
+      const relief = buildRelief(shape, { ...opts.relief, cell: RELIEF_CELL, uvOf, frontZ: geo.boundingBox.max.z, backZ: geo.boundingBox.min.z });
+      if (relief) { geo = appendGeometry(geo, relief); geo.computeBoundingBox(); }
+    }
     const center = new THREE.Vector3();
     geo.boundingBox.getCenter(center);
     center.z = 0;

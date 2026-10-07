@@ -103,6 +103,18 @@
         <div class="slider" data-key="bevel" data-label="Bisel" data-min="0" data-max="0.12" data-step="0.005"></div>
         <div class="slider" data-key="smooth" data-label="Suavizado" data-min="0" data-max="6" data-step="1"></div>
         <div class="slider" data-key="scale" data-label="Escala" data-min="0.4" data-max="1.8" data-step="0.05" data-fmt="x"></div>
+        <label class="sub">Relieve</label>
+        <div class="seg" id="relief-mode" role="group" aria-label="Relieve">
+          <button data-v="none" title="Caras planas">Plano</button>
+          <button data-v="inflate" title="Abombado desde el borde, como un sticker o un globo">Inflar</button>
+          <button data-v="paint" title="Relieve pintado a mano o con degradados">Pintado</button>
+        </div>
+        <div id="relief-opts">
+          <div class="slider" id="relief-amount"></div>
+          <div class="slider" id="relief-edge"></div>
+          <div class="row"><label>En las dos caras</label><label class="switch"><input type="checkbox" id="relief-both" aria-label="Relieve en las dos caras"><span></span></label></div>
+          <button class="btn small" id="relief-paint">Pintar relieve…</button>
+        </div>
       </section>
 
       <section class="sec" id="layers-sec">
@@ -248,6 +260,34 @@
       </div>
       <div class="editor-stage" id="me-stage"><canvas id="me-canvas"></canvas></div>
       <p class="note" id="me-hint"></p>
+    </div>
+  </div>
+
+  <div class="modal" id="relief-editor" hidden role="dialog" aria-modal="true" aria-labelledby="re-title">
+    <div class="modal-card editor-card">
+      <div class="editor-head">
+        <div class="modal-title" id="re-title">Pintar relieve</div>
+        <button class="btn icon small" id="re-close" title="Cerrar (Esc)" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="editor-tools">
+        <div class="seg" id="re-tool" role="group" aria-label="Herramienta">
+          <button data-v="raise" title="Sube la zona bajo el pincel">Subir</button>
+          <button data-v="lower" title="Baja la zona bajo el pincel">Bajar</button>
+          <button data-v="smooth" title="Suaviza las transiciones">Suavizar</button>
+          <button data-v="flatten" title="Devuelve la zona a plano">Aplanar</button>
+          <button data-v="linear" title="Arrastra: de plano (inicio) a lo más alto (final)">Degradado</button>
+          <button data-v="radial" title="Arrastra desde el centro: alto en el centro, plano en el borde">Radial</button>
+        </div>
+        <div class="slider editor-size" id="re-size"></div>
+        <div class="slider editor-size" id="re-strength"></div>
+        <button class="btn small" id="re-undo">Deshacer</button>
+        <button class="btn small" id="re-clear">Aplanar todo</button>
+      </div>
+      <div class="editor-split">
+        <div class="editor-stage" id="re-stage"><canvas id="re-canvas"></canvas></div>
+        <div class="editor-preview"><canvas id="re-preview" width="480" height="360"></canvas><p class="note">Vista 3D: se actualiza al soltar el pincel.</p></div>
+      </div>
+      <p class="note" id="re-hint"></p>
     </div>
   </div>
 

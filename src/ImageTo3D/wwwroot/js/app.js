@@ -21,6 +21,7 @@ import { host } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
 import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
 import { renderLayersPanel } from './layers-ui.js';
+import { initRelief, reliefOptions } from './relief-ui.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -52,7 +53,7 @@ let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, out
 let logo = null;       // THREE.Group of piece meshes
 let materials = [];
 let exporting = false, cancelExport = false;
-let maskUI = null, maskEditor = null;
+let maskUI = null, maskEditor = null, reliefUI = null;
 
 // ───────── source loading ─────────
 // The image work (tracing, colour texture, mask preview) runs in a Web Worker; only the
@@ -224,6 +225,7 @@ function rebuildOutlines() { requestRetrace('outlines'); }
 function onSourceChanged() {
   maskUI?.refresh();
   maskEditor?.refresh();
+  reliefUI?.refresh();
   renderLayers();
   markDirty();
 }
@@ -273,12 +275,26 @@ function rebuildMeshes() {
   if (!source) return;
   const old = logo;
   logo = buildLogoGroup(source.shapeSet, { depth: state.depth, bevel: state.bevel, smoothness: state.smooth,
-    layerStyle: hasLayers() ? layerStyleOf : null });
+    layerStyle: hasLayers() ? layerStyleOf : null, relief: reliefOptions(source) });
   applyMaterials();
   stage.setLogo(logo);
   updateFloorForAnim();
   if (old) old.traverse(o => o.geometry?.dispose());
   invalidateThumbs();
+}
+
+/** The logo at rest, turned three-quarters, drawn into a 2D canvas (the relief editor's preview). */
+function renderStillInto(target) {
+  if (!logo) return;
+  const restore = stage.beginFixedSize(target.width, target.height);
+  resetPose(stage.motion, logo.children);
+  stage.motion.rotation.set(-0.3, 0.55, 0);
+  stage.render(0);
+  const g = target.getContext('2d');
+  g.clearRect(0, 0, target.width, target.height);
+  g.drawImage(stage.renderer.domElement, 0, 0, target.width, target.height);
+  stage.motion.rotation.set(0, 0, 0);
+  restore();
 }
 
 /** Pushes every scene setting in `state` to the engine (used by presets and on start-up). */
@@ -1293,6 +1309,12 @@ function init() {
   fx.clip = (axis, value, keepAbove) => stage.setLogoClip(axis, value, keepAbove);
   const commitMask = op => { requestRetrace(op); markDirty(); };
   maskEditor = initMaskEditor({ getSource: () => source, commit: commitMask });
+  reliefUI = initRelief({
+    getSource: () => source,
+    rebuild: () => { rebuildMeshes(); updateHud(); },
+    changed: markDirty,
+    renderPreview: renderStillInto,
+  });
   maskUI = initMaskUI({ getSource: () => source, isVector: usingVector, commit: commitMask, openEditor: () => maskEditor.open() });
   initMaterials();
   initAnimations();
