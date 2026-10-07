@@ -42,6 +42,7 @@ const DEFAULTS = {
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', aviCodec: 'mjpg', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
   printBase: 'none', printMargin: 3, printBaseThick: 2, printOrient: 'flat', printMinWall: 0.8,
+  glbAnim: true, glbCamera: true,
 };
 /** Settings from older versions (sizes, chained intro / outro) brought up to date. */
 const migrate = s => migrateAnimationSettings(migrateSettings(s));
@@ -291,6 +292,30 @@ function rebuildMeshes() {
   invalidateThumbs();
 }
 
+// ───────── animated GLB ─────────
+/** The active animation, sampled exactly as the video export does, and the camera with it. */
+function glbAnimation() {
+  const seconds = clipSeconds(), tl = currentTimeline(), anim = getAnimation(state.anim);
+  const fit = fitLoop(anim, seconds, state.speed);
+  const [w, h] = exportDims();
+  return {
+    seconds, fps: 30, aspect: w / h,
+    pose: (t, motion, pieces) => (tl ? tl.pose(t, motion, pieces) : poseAt(anim, t * fit.speed, motion, pieces, true)),
+    // The user's framing plus the camera move and any keyframed camera at that instant (the
+    // pose just set it), read and undone like a rendered frame does.
+    camera: state.glbCamera ? t => {
+      const cam = stage.camera, p = cam.position.clone(), q = cam.quaternion.clone(), fov = cam.fov;
+      if (stage.cameraMove !== 'none') stage.applyCameraMove(t / seconds);
+      if (stage.fx.cameraWanted) stage.applyCameraKeys(stage.fx.cameraWanted);
+      const out = { position: cam.position.clone(), quaternion: cam.quaternion.clone(), fov: cam.fov };
+      cam.position.copy(p);
+      cam.quaternion.copy(q);
+      if (cam.fov !== fov) { cam.fov = fov; cam.updateProjectionMatrix(); }
+      return out;
+    } : null,
+  };
+}
+
 // ───────── 3D print (STL) ─────────
 const printOpts = () => ({ widthMm: state.stlWidth, base: state.printBase, margin: state.printMargin,
   baseThick: state.printBaseThick, orient: state.printOrient, minWall: state.printMinWall });
@@ -532,7 +557,12 @@ async function runExport() {
   if (!logo.children.length) { toast(NO_SHAPE_MSG, 'error'); return; }
   const fmt = state.format, kind = outputKind();
   try {
-    if (fmt === 'glb') { const r = await exportGLB(logo, state.scale); download(r.blob, r.filename); return; }
+    if (fmt === 'glb') {
+      const r = await exportGLB(logo, state.scale, state.glbAnim ? glbAnimation() : null);
+      download(r.blob, r.filename);
+      if (state.glbAnim) toast(r.tracks ? `GLB animado: ${r.frames} fotogramas, ${r.tracks} pistas${state.glbCamera ? ' (con cámara)' : ''}.` : 'La animación actual no mueve el logo: el GLB va sin pistas.');
+      return;
+    }
     if (fmt === 'stl') {
       const part = makePrint();
       if (!part) { toast(NO_SHAPE_MSG, 'error'); return; }
@@ -1515,6 +1545,10 @@ function init() {
   segmented('#fps', 'fps', updateExportEstimate);
   segmented('#avi-codec', 'aviCodec', updateExportEstimate);
   segmented('#print-base', 'printBase', updatePrint);
+  for (const [id, key] of [['#glb-anim', 'glbAnim'], ['#glb-camera', 'glbCamera']]) {
+    $(id).checked = !!state[key];
+    $(id).addEventListener('change', e => { state[key] = e.target.checked; save(); });
+  }
   segmented('#print-orient', 'printOrient', updatePrint);
 
   $('#color').value = state.color;

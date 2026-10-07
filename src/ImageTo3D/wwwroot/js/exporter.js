@@ -356,11 +356,85 @@ function restClone(logoGroup, userScale) {
   return root;
 }
 
-export async function exportGLB(logoGroup, userScale) {
-  const root = restClone(logoGroup, userScale);
+/**
+ * GLB of the logo. With `animation` the clip is sampled into keyframe tracks for the animated
+ * group and every piece (a hidden piece becomes scale 0: glTF has no visibility track), plus
+ * an animated camera when `animation.camera` is given. Shader effects (deformation, dissolve,
+ * outline, portal) have no glTF equivalent and are left out; the motion is all there.
+ *   animation: { seconds, fps, aspect, pose(t, motion, pieces), camera?(t) → { position, quaternion, fov } }
+ */
+export async function exportGLB(logoGroup, userScale, animation = null) {
+  if (!animation) {
+    const root = restClone(logoGroup, userScale);
+    root.name = 'Logo3D';
+    const result = await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: true });
+    return { blob: new Blob([result], { type: 'model/gltf-binary' }), filename: `logo3d-${stamp()}.glb` };
+  }
+  // Scene → Logo3D (user scale) → Movimiento (animated) → Logo → Pieza_n; and Camara.
+  const scene = new THREE.Group();
+  scene.name = 'Escena';
+  const root = new THREE.Group();
   root.name = 'Logo3D';
-  const result = await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: true });
-  return { blob: new Blob([result], { type: 'model/gltf-binary' }), filename: `logo3d-${stamp()}.glb` };
+  root.scale.setScalar(userScale);
+  const motion = new THREE.Group();
+  motion.name = 'Movimiento';
+  const logo = logoGroup.clone(true);
+  logo.name = 'Logo';
+  // clone() turns userData into plain JSON; animations need the real vectors back.
+  logo.children.forEach((m, i) => { m.userData = logoGroup.children[i].userData; m.name = `Pieza_${i + 1}`; });
+  motion.add(logo);
+  root.add(motion);
+  scene.add(root);
+  let cam = null;
+  if (animation.camera) {
+    const c0 = animation.camera(0);
+    cam = new THREE.PerspectiveCamera(c0.fov, animation.aspect || 16 / 9, 0.1, 200);
+    cam.name = 'Camara';
+    scene.add(cam);
+  }
+
+  const fps = animation.fps || 30, n = Math.max(2, Math.round(animation.seconds * fps) + 1);
+  const times = new Float32Array(n);
+  const nodes = [motion, ...logo.children];
+  const rec = nodes.map(() => ({ p: new Float32Array(n * 3), q: new Float32Array(n * 4), s: new Float32Array(n * 3) }));
+  const camRec = cam ? { p: new Float32Array(n * 3), q: new Float32Array(n * 4) } : null;
+  for (let i = 0; i < n; i++) {
+    const t = Math.min(animation.seconds, i / fps);
+    times[i] = t;
+    animation.pose(t, motion, logo.children);
+    nodes.forEach((o, k) => {
+      o.position.toArray(rec[k].p, i * 3);
+      o.quaternion.toArray(rec[k].q, i * 4);
+      (o.visible ? o.scale : new THREE.Vector3(0.0001, 0.0001, 0.0001)).toArray(rec[k].s, i * 3);
+    });
+    if (camRec) {
+      const c = animation.camera(t);
+      c.position.toArray(camRec.p, i * 3);
+      c.quaternion.toArray(camRec.q, i * 4);
+    }
+  }
+  // Rest pose for the file's default state; keep only the tracks that actually move.
+  nodes.forEach(o => { o.visible = true; });
+  motion.position.set(0, 0, 0); motion.quaternion.identity(); motion.scale.set(1, 1, 1);
+  logo.children.forEach(m => { m.position.copy(m.userData.home); m.quaternion.identity(); m.scale.set(1, 1, 1); });
+  const moves = (arr, size) => { for (let i = size; i < arr.length; i++) if (Math.abs(arr[i] - arr[i % size]) > 1e-5) return true; return false; };
+  const tracks = [];
+  nodes.forEach((o, k) => {
+    const r = rec[k];
+    if (moves(r.p, 3)) tracks.push(new THREE.VectorKeyframeTrack(`${o.name}.position`, times, r.p));
+    if (moves(r.q, 4)) tracks.push(new THREE.QuaternionKeyframeTrack(`${o.name}.quaternion`, times, r.q));
+    if (moves(r.s, 3)) tracks.push(new THREE.VectorKeyframeTrack(`${o.name}.scale`, times, r.s));
+  });
+  if (cam) {
+    cam.position.fromArray(camRec.p, 0);
+    cam.quaternion.fromArray(camRec.q, 0);
+    if (moves(camRec.p, 3)) tracks.push(new THREE.VectorKeyframeTrack('Camara.position', times, camRec.p));
+    if (moves(camRec.q, 4)) tracks.push(new THREE.QuaternionKeyframeTrack('Camara.quaternion', times, camRec.q));
+  }
+  const clip = new THREE.AnimationClip('Animacion', animation.seconds, tracks);
+  scene.updateMatrixWorld(true);
+  const result = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: false, animations: tracks.length ? [clip] : [] });
+  return { blob: new Blob([result], { type: 'model/gltf-binary' }), filename: `logo3d-animado-${stamp()}.glb`, tracks: tracks.length, frames: n };
 }
 
 /** STL of the printable part (print.js: millimetres, z up, base and orientation applied). */

@@ -234,6 +234,11 @@
         <div class="export-opts" data-for="png">
           <p class="note">Con el fondo «Transparente» (en Escena) el PNG conserva la transparencia.</p>
         </div>
+        <div class="export-opts" data-for="glb">
+          <div class="row"><label>Incluir la animación</label><label class="switch"><input type="checkbox" id="glb-anim" aria-label="Incluir la animación"><span></span></label></div>
+          <div class="row"><label>Incluir la cámara</label><label class="switch"><input type="checkbox" id="glb-camera" aria-label="Incluir la cámara"><span></span></label></div>
+          <p class="note">Se guarda el movimiento de la animación activa (y de la cámara) como pistas glTF, para visores 3D, la web o Three.js. Los efectos de shader (deformación, disolución, contorno, portal) no existen en glTF y no se incluyen.</p>
+        </div>
         <div class="export-opts" data-for="stl">
           <div class="slider" data-key="stlWidth" data-label="Ancho impresión" data-min="20" data-max="300" data-step="5" data-fmt="mm"></div>
           <label class="sub">Base</label>
