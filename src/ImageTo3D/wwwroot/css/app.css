@@ -370,6 +370,18 @@ input[type=color] {
 .seq-reps-label { font-size: 12px; color: var(--muted); margin-right: auto; }
 .seq-hint { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 
+/* ── templates ── */
+.templates-card { width: min(1080px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; display: grid; gap: 10px; }
+.templates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.template { text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 0; overflow: hidden; cursor: pointer; color: inherit; font: inherit; display: grid; }
+.template:hover, .template:focus-visible { border-color: var(--accent); outline: none; }
+.template .thumb { aspect-ratio: 16 / 9; background: #0d0d12 linear-gradient(90deg, #15151c 25%, #1d1d26 50%, #15151c 75%) 0 0 / 200% 100%; animation: thumb-wait 1.2s linear infinite; }
+.template .thumb.ready { animation: none; background-size: cover; background-position: center; }
+.template .info { padding: 8px 10px 10px; display: grid; gap: 3px; }
+.template .name { font-weight: 600; font-size: 13px; }
+.template .tag { font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.template .desc { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+
 /* ── 3D print check ── */
 .print-report { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; line-height: 1.35; }
 .print-report .chk { display: grid; grid-template-columns: 18px 1fr; gap: 4px; }

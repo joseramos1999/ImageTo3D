@@ -2,7 +2,7 @@
 // Every preset sets every scene key, so the result is the same whatever was on before.
 import { MATERIALS } from './materials.js';
 
-const BASE = {
+export const PRESET_BASE = {
   anim: 'rotate-y', speed: 1, mode: 'single',
   material: 'logo', color: '#c8f55a', sideMode: 'logo',
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette',
@@ -56,8 +56,8 @@ const RAW = [
 ];
 
 // Sequence presets play their loop at its normal speed unless they say otherwise.
-export const PRESETS = RAW.map(p => ({ ...p, set: { ...BASE, ...(p.set.mode === 'sequence' ? { seqLoopSpeed: 1 } : {}), ...p.set } }));
-export const PRESET_KEYS = Object.keys(BASE);
+export const PRESETS = RAW.map(p => ({ ...p, set: { ...PRESET_BASE, ...(p.set.mode === 'sequence' ? { seqLoopSpeed: 1 } : {}), ...p.set } }));
+export const PRESET_KEYS = Object.keys(PRESET_BASE);
 // A sequence preset also fixes its parts; a single-animation preset leaves the user's sequence alone.
 const SEQ_KEYS = ['seqIntro', 'seqLoop', 'seqReps', 'seqOutro', 'seqTransition', 'seqLoopSpeed'];
 

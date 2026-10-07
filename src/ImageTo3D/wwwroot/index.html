@@ -32,6 +32,7 @@
       <button class="btn" id="btn-recent" aria-haspopup="true" aria-expanded="false">Recientes ▾</button>
       <div class="menu" id="recent-menu" hidden></div>
     </div>
+    <button class="btn" id="btn-templates" title="Plantillas listas para un resultado: icono de app, intro de YouTube, reel vertical, placa para imprimir…">Plantillas</button>
     <div class="bar-sep"></div>
     <button class="btn icon" id="btn-undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">↶</button>
     <button class="btn icon" id="btn-redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">↷</button>
@@ -304,6 +305,17 @@
         <div class="editor-preview"><canvas id="re-preview" width="480" height="360"></canvas><p class="note">Vista 3D: se actualiza al soltar el pincel.</p></div>
       </div>
       <p class="note" id="re-hint"></p>
+    </div>
+  </div>
+
+  <div class="modal" id="templates" hidden role="dialog" aria-modal="true" aria-labelledby="tp-title">
+    <div class="modal-card templates-card">
+      <div class="editor-head">
+        <div class="modal-title" id="tp-title">Plantillas</div>
+        <button class="btn icon small" id="tp-close" title="Cerrar (Esc)" aria-label="Cerrar">✕</button>
+      </div>
+      <p class="note">Cada plantilla prepara el formato y el tamaño de salida, la escena, la cámara y la animación (y el relieve o la base de impresión cuando hacen falta) para tu logo. Después puedes cambiar lo que quieras; Ctrl+Z la deshace.</p>
+      <div class="templates-grid" id="tp-grid"></div>
     </div>
   </div>
 

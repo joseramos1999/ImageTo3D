@@ -25,6 +25,8 @@ import { initRelief, reliefOptions } from './relief-ui.js';
 import { keysTimeline, DEFAULT_KEYS } from './keys.js';
 import { renderKeysPanel } from './keys-ui.js';
 import { buildPrint } from './print.js';
+import { TEMPLATES } from './templates.js';
+import { DEFAULT_RELIEF } from './relief.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -1182,6 +1184,87 @@ function applyPreset(p) {
   save();
 }
 
+// ───────── templates ─────────
+const templateThumbs = new Map();
+
+/** The template gallery: cards with the user's logo in each template's scene. */
+function openTemplates() {
+  const grid = $('#tp-grid');
+  grid.replaceChildren(...TEMPLATES.map(t => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'template';
+    card.dataset.id = t.id;
+    const thumb = document.createElement('span');
+    thumb.className = 'thumb';
+    if (templateThumbs.has(t.id)) { thumb.classList.add('ready'); thumb.style.backgroundImage = `url(${templateThumbs.get(t.id)})`; }
+    const info = document.createElement('span');
+    info.className = 'info';
+    for (const [cls, text] of [['name', t.label], ['tag', t.tag], ['desc', t.desc]]) {
+      const s = document.createElement('span');
+      s.className = cls;
+      s.textContent = text;
+      info.append(s);
+    }
+    card.append(thumb, info);
+    card.onclick = () => applyTemplate(t);
+    return card;
+  }));
+  $('#templates').hidden = false;
+  grid.querySelector('.template')?.focus();
+  renderTemplateThumbs();
+}
+
+/** Same approach as the presets' thumbnails: one per task, scene switched and switched back. */
+async function renderTemplateThumbs() {
+  for (const t of TEMPLATES) {
+    await new Promise(r => setTimeout(r, 0));
+    if ($('#templates').hidden || !logo || exporting) return;
+    if (templateThumbs.has(t.id)) continue;
+    const saved = { ...state };
+    const cam = stage.camera.position.clone(), target = stage.controls.target.clone();
+    Object.assign(state, t.set);
+    applySceneToEngine();
+    const restore = stage.beginFixedSize(384, 216);
+    stage.frame();
+    // The logo at rest: a template's loop may be mid-flash or mid-flicker at its "still" instant.
+    resetPose(stage.motion, logo.children);
+    stage.render(0.1, { transparent: t.set.bg === 'transparent' });
+    templateThumbs.set(t.id, canvas.toDataURL(t.set.bg === 'transparent' ? 'image/png' : 'image/jpeg', 0.82));
+    restore();
+    Object.assign(state, saved);
+    applySceneToEngine();
+    stage.camera.position.copy(cam);
+    stage.controls.target.copy(target);
+    stage.controls.update();
+    const el = document.querySelector(`#tp-grid .template[data-id="${t.id}"] .thumb`);
+    if (el) { el.classList.add('ready'); el.style.backgroundImage = `url(${templateThumbs.get(t.id)})`; }
+  }
+}
+
+function applyTemplate(t) {
+  const patch = { ...t.set };
+  applySettings({ ...state, ...patch });
+  state.format = patch.format ?? state.format;      // not a work setting: applySettings leaves it
+  // Show what the template set: its sequence, or the tab of its animation.
+  state.animTab = state.mode === 'sequence' ? 'seq' : getAnimation(state.anim).kind === 'intro' ? 'intro' : 'loop';
+  if (t.relief && source) {
+    source.mask.relief = { ...DEFAULT_RELIEF, ...(source.mask.relief || {}), ...t.relief };
+    rebuildMeshes();
+  }
+  segSyncs.forEach(fn => fn());
+  Object.values(sliderSync).forEach(fn => fn());
+  syncExportOpts();
+  reliefUI?.sync();
+  onAnimationChanged();
+  renderAnimationList();
+  frameCamera();
+  markDirty();
+  save();
+  $('#templates').hidden = true;
+  toast(`Plantilla «${t.label}» aplicada: ${t.tag}.`);
+}
+
 /** Re-reads `state` into every scene control after many keys changed at once. */
 function syncSceneUI() {
   markPicked($('#materials'), state.material);
@@ -1462,6 +1545,10 @@ function init() {
   $('#btn-undo').onclick = undo;
   $('#btn-redo').onclick = redo;
   $('#btn-recent').onclick = e => { e.stopPropagation(); toggleRecentMenu(); };
+  $('#btn-templates').onclick = openTemplates;
+  $('#tp-close').onclick = () => { $('#templates').hidden = true; };
+  $('#templates').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('#templates').hidden = true; } });
+  $('#templates').addEventListener('pointerdown', e => { if (e.target === $('#templates')) $('#templates').hidden = true; });
   document.addEventListener('click', e => { if (!$('#recent-menu').hidden && !e.target.closest('#recent-menu')) toggleRecentMenu(false); });
   initShortcuts();
   syncUndoUI();

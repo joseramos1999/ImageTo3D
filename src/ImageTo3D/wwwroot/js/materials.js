@@ -76,7 +76,9 @@ export const MATERIALS = [
   { id: 'rosegold', label: 'Oro rosa', swatch: 'linear-gradient(135deg,#ffe4dc,#e8a594,#8f5548)',
     make: () => new THREE.MeshStandardMaterial({ color: 0xf2b4a2, roughness: 0.2, metalness: 1 }) },
   { id: 'titanium', label: 'Titanio', swatch: 'linear-gradient(135deg,#d6dbe2,#7c838c)',
-    make: () => new THREE.MeshPhysicalMaterial({ color: 0xa3a9b2, roughness: 0.38, metalness: 1, anisotropy: 0.6 }) },
+    // No anisotropy: without tangents in the geometry it shades flat areas with NaN, which the
+    // bloom then spreads over the whole frame. Roughness and a thin clearcoat give the brushed look.
+    make: () => new THREE.MeshPhysicalMaterial({ color: 0xa3a9b2, roughness: 0.34, metalness: 1, clearcoat: 0.15, clearcoatRoughness: 0.45 }) },
   { id: 'carbon', label: 'Carbono', swatch: 'repeating-linear-gradient(45deg,#111 0 4px,#2a2d33 4px 8px)',
     make: () => new THREE.MeshPhysicalMaterial({ map: carbon(), roughness: 0.45, metalness: 0.4, clearcoat: 1, clearcoatRoughness: 0.05 }) },
   { id: 'glass', label: 'Cristal', tint: true, swatch: 'linear-gradient(135deg,#e8f6ff,#9fd2f5)',
