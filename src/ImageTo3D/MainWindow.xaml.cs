@@ -220,6 +220,10 @@ public partial class MainWindow : Window
                 case "file-abort":
                     OnFileMessage(msg);
                     break;
+                case "pick-folder":
+                    var pickId = msg.GetProperty("id").GetString() ?? "";
+                    Dispatcher.BeginInvoke(() => PickFolder(pickId));
+                    break;
                 case "ready":
                     _readyTimer.Stop();
                     Splash.Visibility = Visibility.Collapsed;
@@ -285,6 +289,12 @@ public partial class MainWindow : Window
             {
                 case "file-open":
                     var name = msg.GetProperty("name").GetString() ?? "export";
+                    if (msg.TryGetProperty("dir", out var dirEl))
+                    {
+                        // Batch export: straight into a folder the user picked, under a plain name.
+                        CreateSink(id, BatchPath(dirEl.GetString(), name));
+                        break;
+                    }
                     // Deferred: a modal dialog inside the WebView2 event handler can re-enter it.
                     Dispatcher.BeginInvoke(() => OpenSink(id, name));
                     break;
@@ -311,7 +321,9 @@ public partial class MainWindow : Window
                     {
                         done.Dispose();
                         Post(new { type = "file-closed", id });
-                        Post(new { type = "saved", path = done.Path });
+                        // A batch announces its files itself, not one notice per file.
+                        var quiet = msg.TryGetProperty("quiet", out var q) && q.ValueKind == JsonValueKind.True;
+                        if (!quiet) Post(new { type = "saved", path = done.Path });
                     }
                     break;
                 case "file-abort":
@@ -353,6 +365,56 @@ public partial class MainWindow : Window
             }
             path = dlg.FileName;
         }
+        CreateSink(id, path);
+    }
+
+    // ── Batch export: a folder picked once, then every file written into it without dialogs ──
+    // Only folders the user picked in this session are accepted, and only plain file names
+    // (no paths), so the page can never write anywhere else.
+    private readonly HashSet<string> _batchFolders = new(StringComparer.OrdinalIgnoreCase);
+
+    private void PickFolder(string id)
+    {
+        string? folder = null;
+#if DEBUG
+        // Automated batch tests: this folder, without the dialog.
+        folder = Environment.GetEnvironmentVariable("IMAGETO3D_TEST_FOLDER");
+#endif
+        if (string.IsNullOrEmpty(folder))
+        {
+            var dlg = new OpenFolderDialog
+            {
+                Title = "Carpeta donde guardar los archivos del lote",
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+            };
+            if (dlg.ShowDialog(this) != true)
+            {
+                Post(new { type = "folder-cancelled", id });
+                return;
+            }
+            folder = dlg.FolderName;
+        }
+        folder = Path.GetFullPath(folder);
+        _batchFolders.Add(folder);
+        Post(new { type = "folder-picked", id, path = folder });
+    }
+
+    // The path for a batch file: inside an allowed folder, never overwriting (adds " (2)"…).
+    private string BatchPath(string? dir, string name)
+    {
+        if (dir == null || !_batchFolders.Contains(Path.GetFullPath(dir)))
+            throw new IOException("Esa carpeta no se ha elegido para el lote.");
+        if (string.IsNullOrWhiteSpace(name) || name != Path.GetFileName(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Trim('.').Length == 0)
+            throw new IOException("Nombre de archivo no válido.");
+        var path = Path.Combine(dir, name);
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var ext = Path.GetExtension(name);
+        for (var n = 2; File.Exists(path); n++) path = Path.Combine(dir, $"{stem} ({n}){ext}");
+        return path;
+    }
+
+    private void CreateSink(string id, string path)
+    {
         try
         {
             var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 20);

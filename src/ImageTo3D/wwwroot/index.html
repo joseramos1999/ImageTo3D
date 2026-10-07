@@ -259,6 +259,7 @@
           </div>
         </div>
         <button class="btn primary wide" id="btn-export">Exportar</button>
+        <button class="btn wide batch-open" id="btn-batch" title="Varias imágenes, la misma escena, exportadas en cola">Exportar en lote…</button>
       </section>
     </aside>
   </main>
@@ -321,6 +322,31 @@
       </div>
       <p class="note">Cada plantilla prepara el formato y el tamaño de salida, la escena, la cámara y la animación (y el relieve o la base de impresión cuando hacen falta) para tu logo. Después puedes cambiar lo que quieras; Ctrl+Z la deshace.</p>
       <div class="templates-grid" id="tp-grid"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="batch" hidden role="dialog" aria-modal="true" aria-labelledby="bt-title">
+    <div class="modal-card batch-card">
+      <div class="editor-head">
+        <div class="modal-title" id="bt-title">Exportar en lote</div>
+        <button class="btn icon small" id="bt-close" title="Cerrar (Esc)" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="batch-drop" id="bt-drop" tabindex="0" role="button" aria-label="Añadir imágenes">
+        <b>Arrastra aquí varias imágenes</b> o haz clic para elegirlas
+        <small>PNG, JPG, WEBP, SVG… Cada una se recorta en automático y se exporta con la escena elegida.</small>
+      </div>
+      <input type="file" id="bt-files" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/bmp" multiple hidden>
+      <div class="batch-list" id="bt-list"></div>
+      <div class="row"><label for="bt-apply">Aplicar a todas</label><select class="select" id="bt-apply"></select></div>
+      <p class="note" id="bt-summary"></p>
+      <div class="row batch-dest" id="bt-dest-row">
+        <button class="btn small" id="bt-folder">Elegir carpeta…</button>
+        <span class="note" id="bt-folder-path">Sin carpeta: elige dónde guardar los archivos.</span>
+      </div>
+      <div class="bar"><div id="bt-bar"></div></div>
+      <div class="modal-row"><span id="bt-status"></span>
+        <span><button class="btn small" id="bt-cancel" hidden>Cancelar</button> <button class="btn primary small" id="bt-start">Exportar</button></span>
+      </div>
     </div>
   </div>
 

@@ -15,7 +15,7 @@ import { initUpdates } from './update-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPngSequence, exportAvi, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
-import { openSink } from './filesink.js';
+import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
 import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
@@ -60,7 +60,7 @@ const stage = new Stage(canvas);
 let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, outlines, shapeSet, before, after, vector, vectorNote }
 let logo = null;       // THREE.Group of piece meshes
 let materials = [];
-let exporting = false, cancelExport = false;
+let exporting = false, cancelExport = false, batching = false;
 let maskUI = null, maskEditor = null, reliefUI = null;
 
 // ───────── source loading ─────────
@@ -552,23 +552,32 @@ const NO_ALPHA = new Set(['mp4', 'avi']);
 /** What will be written: the format, with AVI split by codec (Motion JPEG or RGB + alpha). */
 const outputKind = () => state.format === 'avi' && state.aviCodec === 'rgba' ? 'avi-rgba' : state.format;
 
-async function runExport() {
-  if (!logo || exporting) return;
-  if (!logo.children.length) { toast(NO_SHAPE_MSG, 'error'); return; }
+/**
+ * Exports the current logo in the current format. Interactive by default (save dialog,
+ * progress window, notices). A batch passes `out` instead:
+ *   fileName(ext) → the file's name;  open(name) → a sink (or null: no streaming);
+ *   save(blob, name) → stores a finished file;  onProgress(p);  errors are thrown.
+ * Resolves to 'ok', 'cancelled' or 'error'.
+ */
+async function runExport(out = null) {
+  if (!logo || exporting) return 'error';
+  if (!logo.children.length) { if (out) throw new Error(NO_SHAPE_MSG); toast(NO_SHAPE_MSG, 'error'); return 'error'; }
   const fmt = state.format, kind = outputKind();
+  const nameFor = fallback => (out?.fileName ? out.fileName(fallback.split('.').pop()) : fallback);
+  const deliver = (blob, name) => (out?.save ? out.save(blob, nameFor(name)) : download(blob, name));
   try {
     if (fmt === 'glb') {
       const r = await exportGLB(logo, state.scale, state.glbAnim ? glbAnimation() : null);
-      download(r.blob, r.filename);
-      if (state.glbAnim) toast(r.tracks ? `GLB animado: ${r.frames} fotogramas, ${r.tracks} pistas${state.glbCamera ? ' (con cámara)' : ''}.` : 'La animación actual no mueve el logo: el GLB va sin pistas.');
-      return;
+      await deliver(r.blob, r.filename);
+      if (state.glbAnim && !out) toast(r.tracks ? `GLB animado: ${r.frames} fotogramas, ${r.tracks} pistas${state.glbCamera ? ' (con cámara)' : ''}.` : 'La animación actual no mueve el logo: el GLB va sin pistas.');
+      return 'ok';
     }
     if (fmt === 'stl') {
       const part = makePrint();
-      if (!part) { toast(NO_SHAPE_MSG, 'error'); return; }
+      if (!part) throw new Error(NO_SHAPE_MSG);
       const r = exportSTL(part.group, state.stlWidth);
-      download(r.blob, r.filename);
-      return;
+      await deliver(r.blob, r.filename);
+      return 'ok';
     }
 
     const [w, h] = exportDims();
@@ -577,14 +586,13 @@ async function runExport() {
     let sink = null;
     if (ANIMATED[kind]) {
       const support = await checkVideoSupport(stage.renderer, kind, w, h, fps);
-      if (!support.ok) { toast(support.reason, 'error'); return; }
-      if (host.isDesktop) {
+      if (!support.ok) throw new Error(support.reason);
+      if (host.isDesktop && (!out || out.open)) {
         // Where to save is asked first, then the file streams to disk as it renders.
-        sink = await openSink(animationFileName(kind, w, h));
-        if (!sink) return;
+        sink = await (out?.open || openSink)(nameFor(animationFileName(kind, w, h)));
+        if (!sink) return 'cancelled';
       } else if (estimateBytes(kind, w, h, fps, seconds, stage.transparent) > 1.5 * 1024 ** 3) {
-        toast('Eso pasaría de 1,5 GB y en el navegador se monta entero en memoria. Acórtalo o usa la app de escritorio.', 'error');
-        return;
+        throw new Error('Eso pasaría de 1,5 GB y en el navegador se monta entero en memoria. Acórtalo o usa la app de escritorio.');
       }
     }
     exporting = true;
@@ -598,14 +606,14 @@ async function runExport() {
             stage.render((camClock % seconds) / seconds);
           },
         });
-        download(r.blob, r.filename);
-        return;
+        await deliver(r.blob, r.filename);
+        return 'ok';
       }
 
       const fit = fitLoop(anim, seconds, state.speed);
       const tl = currentTimeline();
       cancelExport = false;
-      showProgress(`Renderizando ${ANIMATED[kind]}${stage.transparent && !NO_ALPHA.has(kind) ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
+      if (!out) showProgress(`Renderizando ${ANIMATED[kind]}${stage.transparent && !NO_ALPHA.has(kind) ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
       const job = {
         canvas, renderer: stage.renderer, kind: fmt, codec: state.aviCodec, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
@@ -614,16 +622,17 @@ async function runExport() {
           else poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
           stage.render(t / seconds);
         },
-        onProgress: p => setProgress(p, started),
+        onProgress: p => (out?.onProgress ? out.onProgress(p) : setProgress(p, started)),
         isCancelled: () => cancelExport,
       };
       try {
         const r = fmt === 'pngseq' ? await exportPngSequence(job) : fmt === 'avi' ? await exportAvi(job) : await exportVideo(job);
-        if (!r) { await sink?.abort(); toast('Exportación cancelada'); return; }
+        if (!r) { await sink?.abort(); if (!out) toast('Exportación cancelada'); return 'cancelled'; }
         rememberRenderRate(kind, w * h * seconds * fps, performance.now() - started);
         updateExportEstimate();
         // Streamed files are announced by the host ("saved", with "Mostrar en carpeta").
-        if (r.blob) download(r.blob, animationFileName(kind, w, h));
+        if (r.blob) await deliver(r.blob, animationFileName(kind, w, h));
+        return 'ok';
       } catch (e) {
         await sink?.abort().catch(() => {});
         throw e;
@@ -631,11 +640,13 @@ async function runExport() {
     } finally {
       restore();
       exporting = false;
-      hideProgress();
+      if (!out) hideProgress();
     }
   } catch (e) {
     console.error(e);
+    if (out) throw e;
     toast('Error al exportar: ' + (e.message || e), 'error');
+    return 'error';
   }
 }
 
@@ -736,6 +747,7 @@ function flushHistory() {
 
 /** Something about the work changed: record it for undo and schedule an autosave. */
 function markDirty() {
+  if (batching) return;   // a batch's images are not the user's work
   clearTimeout(historyTimer);
   historyTimer = setTimeout(flushHistory, 400);
   clearTimeout(autosaveTimer);
@@ -763,7 +775,7 @@ async function viewportThumb() {
 }
 
 async function autosave() {
-  if (!source || !projectId || exporting) return;
+  if (!source || !projectId || exporting || batching) return;
   const id = projectId;
   try {
     if (source.storedAs !== id) { await store.putImage(id, source.blob); source.storedAs = id; }
@@ -1214,6 +1226,169 @@ function applyPreset(p) {
   save();
 }
 
+// ───────── batch export ─────────
+// Several images, one scene: each is loaded with an automatic cut-out, framed and exported
+// in the current format (or a preset's / template's), named after its file. On the desktop the
+// files go straight into a folder picked once; in a browser they download one by one. The
+// user's own logo, settings and project come back at the end, untouched.
+const batch = { files: [], folder: null, running: false, cancel: false };
+const FORMAT_NAMES = { mp4: 'MP4', webm: 'WebM', avi: 'AVI', pngseq: 'secuencia PNG (ZIP)', png: 'PNG', glb: 'GLB', stl: 'STL' };
+
+function openBatch() {
+  if (exporting) return;
+  const sel = $('#bt-apply'), keep = sel.value;
+  sel.replaceChildren(new Option('Los ajustes actuales', 'current'));
+  for (const [label, items, prefix] of [['Predeterminados', PRESETS, 'preset:'], ['Plantillas', TEMPLATES, 'template:']]) {
+    const g = document.createElement('optgroup');
+    g.label = label;
+    items.forEach(x => g.append(new Option(x.label, prefix + x.id)));
+    sel.append(g);
+  }
+  if (keep) sel.value = keep;
+  $('#bt-dest-row').hidden = !host.isDesktop;
+  renderBatch();
+  $('#batch').hidden = false;
+  $('#bt-drop').focus();
+}
+
+function batchChoice() {
+  const v = $('#bt-apply').value;
+  if (v.startsWith('preset:')) return PRESETS.find(p => 'preset:' + p.id === v) || null;
+  if (v.startsWith('template:')) return TEMPLATES.find(t => 'template:' + t.id === v) || null;
+  return null;
+}
+
+function renderBatch() {
+  const list = $('#bt-list');
+  list.replaceChildren(...batch.files.map((item, i) => {
+    const row = document.createElement('div');
+    row.className = 'batch-item ' + (item.state || '');
+    const name = document.createElement('span');
+    name.textContent = item.file.name;
+    const st = document.createElement('span');
+    st.className = 'st';
+    st.textContent = item.status;
+    const rm = document.createElement('button');
+    rm.className = 'btn icon small rm';
+    rm.textContent = '✕';
+    rm.title = 'Quitar de la lista';
+    rm.setAttribute('aria-label', `Quitar ${item.file.name}`);
+    rm.disabled = batch.running;
+    rm.onclick = () => { batch.files.splice(i, 1); renderBatch(); };
+    row.append(name, st, rm);
+    return row;
+  }));
+  const choice = batchChoice(), s = { ...state, ...(choice?.set || {}) };
+  const [w, h] = sizeOf(s), fmt = s.format;
+  const what = fmt === 'stl' ? ` de ${s.stlWidth} mm` : fmt === 'glb' ? '' : ` de ${w}×${h}`;
+  $('#bt-summary').textContent = `Cada imagen se recorta en automático y se exporta como ${FORMAT_NAMES[fmt] || fmt}${what}, con el nombre de su archivo` +
+    (host.isDesktop ? ' en la carpeta elegida (sin sobrescribir nada).' : '; el navegador irá descargándolas.');
+  $('#bt-folder-path').textContent = batch.folder || 'Sin carpeta: elige dónde guardar los archivos.';
+  const left = batch.files.filter(f => f.state !== 'done').length;
+  const start = $('#bt-start');
+  start.disabled = batch.running || !left || (host.isDesktop && !batch.folder);
+  start.textContent = `Exportar ${left} archivo${left === 1 ? '' : 's'}`;
+  $('#bt-cancel').hidden = !batch.running;
+  $('#bt-apply').disabled = batch.running;
+  $('#bt-folder').disabled = batch.running;
+}
+
+function addBatchFiles(files) {
+  for (const f of files) if (f.type.startsWith('image/')) batch.files.push({ file: f, status: 'Pendiente', state: '' });
+  renderBatch();
+}
+
+async function runBatch() {
+  const queue = batch.files.filter(f => f.state !== 'done');
+  if (batch.running || !queue.length || (host.isDesktop && !batch.folder)) return;
+  batch.running = true;
+  batch.cancel = false;
+  flushHistory();
+  await autosave();
+  batching = true;
+  const saved = {
+    state: structuredClone(state), cam: cameraState(), projectId,
+    source: source && { name: source.name, blob: source.blob, mask: structuredClone(source.mask), storedAs: source.storedAs },
+  };
+  const choice = batchChoice();
+  if (choice) {
+    applySettings({ ...state, ...choice.set });
+    state.format = choice.set.format ?? state.format;
+    syncExportOpts();
+    onAnimationChanged();
+  }
+  // Per image: the automatic cut, plus the current SVG / colour-layer choice and an inflated
+  // relief (a painted one belongs to its own image).
+  const m = saved.source?.mask || {};
+  const relief = choice?.relief ?? (m.relief?.mode === 'inflate' ? { ...m.relief, map: null } : null);
+  const mask = { ...DEFAULT_MASK, vector: m.vector ?? true, split: !!m.split, colors: m.colors ?? 'auto', ...(relief ? { relief } : {}) };
+
+  let done = 0, failed = 0;
+  const bar = p => { $('#bt-bar').style.width = (p * 100).toFixed(1) + '%'; };
+  bar(0);
+  for (const [k, item] of queue.entries()) {
+    if (batch.cancel) break;
+    const set = (status, cls = '') => { item.status = status; item.state = cls; renderBatch(); };
+    $('#bt-status').textContent = `${k + 1} de ${queue.length}: ${item.file.name}`;
+    set('Cargando…');
+    try {
+      const decoded = await decodeImage(item.file);
+      const ok = await loadSource(decoded.bitmap, { name: item.file.name, blob: item.file, mask });
+      if (!ok || !source?.outlines?.length) throw new Error('no se encontró la forma del logo');
+      frameCamera();
+      const base = item.file.name.replace(/\.[^.]+$/, '') || 'logo';
+      const r = await runExport({
+        fileName: ext => `${base}.${ext}`,
+        open: host.isDesktop
+          ? async name => {
+            const sink = await openSinkIn(batch.folder, name);
+            const close = sink.close.bind(sink);
+            sink.close = () => close({ quiet: true });
+            return sink;
+          }
+          : null,
+        save: host.isDesktop ? (blob, name) => saveBlobIn(batch.folder, name, blob) : (blob, name) => download(blob, name),
+        onProgress: p => {
+          item.status = `Exportando ${Math.round(p * 100)} %`;
+          const st = document.querySelectorAll('#bt-list .batch-item .st')[batch.files.indexOf(item)];
+          if (st) st.textContent = item.status;
+          bar((k + p) / queue.length);
+        },
+      });
+      if (r === 'cancelled') { set('Cancelado', 'failed'); break; }
+      set('Hecho ✓', 'done');
+      done++;
+    } catch (e) {
+      console.error(e);
+      set('Error: ' + (e.message || e), 'failed');
+      failed++;
+    }
+    bar((k + 1) / queue.length);
+  }
+
+  // Back to the user's own work.
+  applySettings(saved.state);
+  Object.assign(state, { format: saved.state.format, animTab: saved.state.animTab });
+  if (saved.source) {
+    try {
+      const decoded = await decodeImage(new File([saved.source.blob], saved.source.name, { type: saved.source.blob.type }));
+      await loadSource(decoded.bitmap, { name: saved.source.name, blob: saved.source.blob, thumbUrl: URL.createObjectURL(saved.source.blob), mask: saved.source.mask });
+      source.storedAs = saved.source.storedAs;
+    } catch (e) { console.error(e); }
+  }
+  projectId = saved.projectId;
+  applyCamera(saved.cam);
+  segSyncs.forEach(fn => fn());
+  syncExportOpts();
+  onAnimationChanged();
+  renderAnimationList();
+  batching = false;
+  batch.running = false;
+  $('#bt-status').textContent = batch.cancel ? `Cancelado: ${done} hecho${done === 1 ? '' : 's'}.` : `Terminado: ${done} hecho${done === 1 ? '' : 's'}${failed ? `, ${failed} con error` : ''}.`;
+  renderBatch();
+  toast(`Lote: ${done} de ${queue.length} exportado${queue.length === 1 ? '' : 's'}${failed ? `, ${failed} con error` : ''}${host.isDesktop && done ? ` en ${batch.folder}` : ''}.`);
+}
+
 // ───────── templates ─────────
 const templateThumbs = new Map();
 
@@ -1503,6 +1678,7 @@ function initDragDrop() {
     e.preventDefault();
     depth = 0;
     stageEl.classList.remove('dragging');
+    if (!$('#batch').hidden) return;   // the batch window takes dropped files for its queue
     const file = e.dataTransfer?.files?.[0];
     if (file) openFile(file);
   });
@@ -1574,12 +1750,28 @@ function init() {
   };
   $('#btn-text').onclick = makeText;
   $('#text-input').addEventListener('keydown', e => { if (e.key === 'Enter') makeText(); });
-  $('#btn-export').onclick = runExport;
+  $('#btn-export').onclick = () => runExport();
   $('#btn-save').onclick = saveProjectFile;
   $('#btn-undo').onclick = undo;
   $('#btn-redo').onclick = redo;
   $('#btn-recent').onclick = e => { e.stopPropagation(); toggleRecentMenu(); };
   $('#btn-templates').onclick = openTemplates;
+  $('#btn-batch').onclick = openBatch;
+  const closeBatch = () => { if (!batch.running) $('#batch').hidden = true; };
+  $('#bt-close').onclick = closeBatch;
+  $('#batch').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeBatch(); } });
+  $('#bt-apply').onchange = renderBatch;
+  $('#bt-drop').onclick = () => $('#bt-files').click();
+  $('#bt-drop').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#bt-files').click(); } };
+  $('#bt-files').onchange = e => { addBatchFiles([...e.target.files]); e.target.value = ''; };
+  // Dropped here, files join the batch instead of replacing the logo (the window's own drop).
+  const drop = $('#bt-drop');
+  drop.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addBatchFiles([...(e.dataTransfer?.files || [])]); });
+  $('#bt-folder').onclick = async () => { const f = await pickFolder(); if (f) { batch.folder = f; renderBatch(); } };
+  $('#bt-start').onclick = runBatch;
+  $('#bt-cancel').onclick = () => { batch.cancel = true; cancelExport = true; };
   $('#tp-close').onclick = () => { $('#templates').hidden = true; };
   $('#templates').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); $('#templates').hidden = true; } });
   $('#templates').addEventListener('pointerdown', e => { if (e.target === $('#templates')) $('#templates').hidden = true; });

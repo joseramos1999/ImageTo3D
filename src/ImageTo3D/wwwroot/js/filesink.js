@@ -56,9 +56,10 @@ class FileSink {
     if (this.error) throw this.error;
   }
 
-  async close() {
+  /** quiet: no «Guardado en…» notice (a batch reports its files itself). */
+  async close({ quiet = false } = {}) {
     await this.drain(0);
-    await host.request({ type: 'file-close', id: this.id }, ['file-closed']);
+    await host.request({ type: 'file-close', id: this.id, quiet }, ['file-closed']);
     this.release();
   }
 
@@ -76,14 +77,38 @@ class FileSink {
 
 /** Shows the native save dialog; resolves to a sink, or null if the user cancelled
  *  (or there is no desktop host). */
-export async function openSink(suggestedName) {
+export function openSink(suggestedName) {
+  return open({ name: suggestedName });
+}
+
+/** A sink for `name` inside a folder chosen with pickFolder() (batch export: no dialog). */
+export function openSinkIn(dir, name) {
+  return open({ name, dir });
+}
+
+/** The native folder picker; resolves to the folder's path, or null. Desktop only. */
+export async function pickFolder() {
+  if (!host.isDesktop) return null;
+  const reply = await host.request({ type: 'pick-folder', id: String(nextId++) }, ['folder-picked', 'folder-cancelled']);
+  return reply.type === 'folder-picked' ? reply.path : null;
+}
+
+/** Writes a whole blob to `name` in a picked folder. */
+export async function saveBlobIn(dir, name, blob) {
+  const sink = await openSinkIn(dir, name);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  for (let pos = 0; pos < bytes.length; pos += 8 << 20) sink.write(pos, bytes.subarray(pos, pos + (8 << 20)));
+  await sink.close({ quiet: true });
+}
+
+async function open(request) {
   if (!host.isDesktop) return null;
   const id = String(nextId++);
   // The host shares the buffer just before it confirms the file.
   let shared = null;
   const off = host.on('file-buffer', msg => { if (msg.id === id) shared = msg.buffer; });
   try {
-    const reply = await host.request({ type: 'file-open', id, name: suggestedName }, ['file-opened', 'file-cancelled']);
+    const reply = await host.request({ type: 'file-open', id, ...request }, ['file-opened', 'file-cancelled']);
     return reply.type === 'file-opened' ? new FileSink(id, reply.path, shared) : null;
   } finally {
     off();
