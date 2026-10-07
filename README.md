@@ -21,7 +21,7 @@ Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la �
 - **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 15 movimientos de cámara con intensidad regulable (incluidos los de producto: macro, órbita parcial y paralaje).
 - **Animación:** 161 animaciones (64 bucles, 51 intros y 46 salidas; algunas revelan el logo con planos de recorte y otras usan efectos: trazado del contorno con líneas de luz, deformación elástica real —ondas, gelatina, torsión, curvatura, glitch de franjas—, disolución en partículas o humo y su reconstrucción, portal y barrido de luz metálica) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 21 estilos **Predeterminados** que aplican la escena completa con un clic. La pestaña **Keyframes** anima con tres puntos (inicio, medio y final) la posición, rotación, escala, opacidad y brillo del logo, la cámara (zoom, órbita, altura) y la luz (dirección, elevación, intensidad), con curva suave, pausa en el medio o lineal, y opción de volver al inicio para un bucle perfecto.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
-- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI en Motion JPEG (el más compatible) o sin compresión con canal alfa (como el códec «Ninguno» con «RGB + alfa» de After Effects) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
+- **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI en Motion JPEG (el más compatible) o sin compresión con canal alfa (como el códec «Ninguno» con «RGB + alfa» de After Effects) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros con **comprobación para impresión 3D**: base automática (placa o siguiendo el contorno), orientación tumbada o de pie, malla cerrada, grosor, paredes más finas que la boquilla (con mapa en rojo), detalles pequeños y piezas sueltas o flotantes, con vista de la pieza impresa. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
 ## Arquitectura
 
@@ -46,6 +46,7 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/presets.js         21 estilos predeterminados
          ├─ js/sequence-ui.js     pestaña Secuencia: intro, bucle × N y salida
          ├─ js/keys.js, keys-ui.js  pestaña Keyframes: tres puntos interpolados
+         ├─ js/print.js           pieza imprimible (base, orientación) y comprobaciones para impresión 3D
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
          ├─ js/exporter.js        MP4 (H.264), WebM (VP9, con alfa), AVI (Motion JPEG o RGBA sin compresión, OpenDML, js/avi.js), secuencia PNG (js/zip.js), PNG, GLB, STL
          ├─ js/formats.js         tamaños de salida predefinidos y personalizado

@@ -363,15 +363,9 @@ export async function exportGLB(logoGroup, userScale) {
   return { blob: new Blob([result], { type: 'model/gltf-binary' }), filename: `logo3d-${stamp()}.glb` };
 }
 
-/** STL in millimetres, scaled so the logo is `widthMm` across, ready for a slicer. */
-export function exportSTL(logoGroup, widthMm = 100) {
-  const root = restClone(logoGroup, 1);
-  const box = new THREE.Box3().setFromObject(root);
-  const w = box.max.x - box.min.x;
-  const holder = new THREE.Group();
-  holder.scale.setScalar(widthMm / w);
-  holder.add(root);
-  holder.updateMatrixWorld(true);
-  const data = new STLExporter().parse(holder, { binary: true });
+/** STL of the printable part (print.js: millimetres, z up, base and orientation applied). */
+export function exportSTL(printGroup, widthMm = 100) {
+  printGroup.updateMatrixWorld(true);
+  const data = new STLExporter().parse(printGroup, { binary: true });
   return { blob: new Blob([data], { type: 'model/stl' }), filename: `logo3d-${widthMm}mm-${stamp()}.stl` };
 }

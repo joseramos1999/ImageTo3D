@@ -235,6 +235,22 @@
         </div>
         <div class="export-opts" data-for="stl">
           <div class="slider" data-key="stlWidth" data-label="Ancho impresión" data-min="20" data-max="300" data-step="5" data-fmt="mm"></div>
+          <label class="sub">Base</label>
+          <div class="seg" id="print-base" role="group" aria-label="Base">
+            <button data-v="none">Sin base</button><button data-v="plate">Placa</button><button data-v="contour">Contorno</button>
+          </div>
+          <div class="slider" data-key="printMargin" data-label="Margen de la base" data-min="1" data-max="15" data-step="0.5" data-fmt="mm"></div>
+          <div class="slider" data-key="printBaseThick" data-label="Grosor de la base" data-min="0.8" data-max="6" data-step="0.2" data-fmt="mm"></div>
+          <label class="sub">Orientación</label>
+          <div class="seg" id="print-orient" role="group" aria-label="Orientación">
+            <button data-v="flat" title="Tumbado, con la cara hacia arriba">Tumbado</button><button data-v="stand" title="De pie sobre una peana">De pie</button>
+          </div>
+          <div class="slider" data-key="printMinWall" data-label="Pared mínima (boquilla × 2)" data-min="0.4" data-max="2" data-step="0.1" data-fmt="mm"></div>
+          <div class="print-report" id="print-report" aria-live="polite"></div>
+          <div class="print-views">
+            <figure><canvas id="print-preview" width="400" height="300"></canvas><figcaption>Pieza impresa</figcaption></figure>
+            <figure><canvas id="print-map" width="400" height="300"></canvas><figcaption>Paredes finas en rojo</figcaption></figure>
+          </div>
         </div>
         <button class="btn primary wide" id="btn-export">Exportar</button>
       </section>

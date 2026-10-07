@@ -24,6 +24,7 @@ import { renderLayersPanel } from './layers-ui.js';
 import { initRelief, reliefOptions } from './relief-ui.js';
 import { keysTimeline, DEFAULT_KEYS } from './keys.js';
 import { renderKeysPanel } from './keys-ui.js';
+import { buildPrint } from './print.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -38,6 +39,7 @@ const DEFAULTS = {
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', aviCodec: 'mjpg', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
+  printBase: 'none', printMargin: 3, printBaseThick: 2, printOrient: 'flat', printMinWall: 0.8,
 };
 /** Settings from older versions (sizes, chained intro / outro) brought up to date. */
 const migrate = s => migrateAnimationSettings(migrateSettings(s));
@@ -281,9 +283,69 @@ function rebuildMeshes() {
     layerStyle: hasLayers() ? layerStyleOf : null, relief: reliefOptions(source) });
   applyMaterials();
   stage.setLogo(logo);
+  updatePrint();
   updateFloorForAnim();
   if (old) old.traverse(o => o.geometry?.dispose());
   invalidateThumbs();
+}
+
+// ───────── 3D print (STL) ─────────
+const printOpts = () => ({ widthMm: state.stlWidth, base: state.printBase, margin: state.printMargin,
+  baseThick: state.printBaseThick, orient: state.printOrient, minWall: state.printMinWall });
+const makePrint = () => (logo ? buildPrint(logo, printOpts()) : null);
+
+/** The check under the STL options: the list, the map of thin walls and a view of the part. */
+let printTimer = 0;
+function updatePrint() {
+  clearTimeout(printTimer);
+  if (state.format !== 'stl' || !logo) return;
+  printTimer = setTimeout(() => {
+    const part = makePrint();
+    const box = $('#print-report');
+    if (!part) { box.textContent = 'No hay logo que imprimir.'; return; }
+    const mark = { ok: '✓', warn: '⚠', info: 'ℹ' };
+    box.replaceChildren(...part.checks.map(c => {
+      const row = document.createElement('div');
+      row.className = 'chk ' + c.level;
+      const i = document.createElement('i');
+      i.textContent = mark[c.level];
+      row.append(i, document.createTextNode(c.text));
+      return row;
+    }));
+    const mapCanvas = $('#print-map'), mg = mapCanvas.getContext('2d');
+    mg.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+    const k = Math.min(mapCanvas.width / part.map.width, mapCanvas.height / part.map.height) * 0.92;
+    mg.drawImage(part.map, (mapCanvas.width - part.map.width * k) / 2, (mapCanvas.height - part.map.height * k) / 2, part.map.width * k, part.map.height * k);
+    renderPrintPreview(part.group, $('#print-preview'));
+  }, 200);
+}
+
+/** The part on its bed, seen from above at three-quarters (it stands in for the logo a moment). */
+function renderPrintPreview(group, target) {
+  const size = group.userData.size;
+  const s = 3.1 / Math.max(size.x, size.y, size.z);   // a little under the logo size: seen at an angle it reaches further
+  const holder = new THREE.Group();
+  const face = new THREE.MeshStandardMaterial({ color: '#dfe3ea', roughness: 0.55 });
+  const base = new THREE.MeshStandardMaterial({ color: '#8f9bb0', roughness: 0.6 });
+  group.children.forEach((m, i) => { m.material = i === group.children.length - 1 && state.printBase !== 'none' ? base : face; m.castShadow = true; });
+  holder.add(group);
+  holder.rotation.x = -Math.PI / 2;          // the bed's z (up) becomes the scene's y
+  holder.scale.setScalar(s);
+  holder.position.y = -size.z * s / 2;
+  holder.userData.size = new THREE.Vector3(size.x * s, size.z * s, size.y * s);
+  const prev = stage.logo;
+  stage.setLogo(holder);
+  const restore = stage.beginFixedSize(target.width, target.height);
+  stage.motion.rotation.set(0.55, -0.5, 0);
+  stage.render(0);
+  const g = target.getContext('2d');
+  g.clearRect(0, 0, target.width, target.height);
+  g.drawImage(stage.renderer.domElement, 0, 0, target.width, target.height);
+  stage.motion.rotation.set(0, 0, 0);
+  restore();
+  stage.setLogo(prev);
+  face.dispose();
+  base.dispose();
 }
 
 /** The logo at rest, turned three-quarters, drawn into a 2D canvas (the relief editor's preview). */
@@ -469,7 +531,13 @@ async function runExport() {
   const fmt = state.format, kind = outputKind();
   try {
     if (fmt === 'glb') { const r = await exportGLB(logo, state.scale); download(r.blob, r.filename); return; }
-    if (fmt === 'stl') { const r = exportSTL(logo, state.stlWidth); download(r.blob, r.filename); return; }
+    if (fmt === 'stl') {
+      const part = makePrint();
+      if (!part) { toast(NO_SHAPE_MSG, 'error'); return; }
+      const r = exportSTL(part.group, state.stlWidth);
+      download(r.blob, r.filename);
+      return;
+    }
 
     const [w, h] = exportDims();
     const anim = getAnimation(state.anim);
@@ -870,6 +938,7 @@ const ON_CHANGE = {
   camAmount: () => { stage.cameraAmount = state.camAmount; },
   density: () => stage.setParticles(state.particles, state.density, '#ffffff'),
   seconds: () => { updateLoopNote(); updateExportEstimate(); },
+  stlWidth: updatePrint, printMargin: updatePrint, printBaseThick: updatePrint, printMinWall: updatePrint,
   speed: () => { updateLoopNote(); updateExportEstimate(); if (state.animTab === 'seq') renderAnimationList(); },
 };
 
@@ -1279,6 +1348,7 @@ function syncExportOpts() {
   $('#btn-export').textContent = label[state.format];
   $('#btn-export').disabled = false;
   updateExportEstimate();
+  updatePrint();
 }
 
 function updateLoopNote() {
@@ -1361,6 +1431,8 @@ function init() {
   initSize();
   segmented('#fps', 'fps', updateExportEstimate);
   segmented('#avi-codec', 'aviCodec', updateExportEstimate);
+  segmented('#print-base', 'printBase', updatePrint);
+  segmented('#print-orient', 'printOrient', updatePrint);
 
   $('#color').value = state.color;
   $('#color').addEventListener('input', e => { state.color = e.target.value; applyMaterials(); save(); });

@@ -370,6 +370,18 @@ input[type=color] {
 .seq-reps-label { font-size: 12px; color: var(--muted); margin-right: auto; }
 .seq-hint { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 
+/* ── 3D print check ── */
+.print-report { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; line-height: 1.35; }
+.print-report .chk { display: grid; grid-template-columns: 18px 1fr; gap: 4px; }
+.print-report .chk i { font-style: normal; font-weight: 700; }
+.print-report .ok i { color: var(--accent); }
+.print-report .warn i { color: #ffb347; }
+.print-report .info i { color: #7fb8ff; }
+.print-views { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.print-views figure { margin: 0; }
+.print-views canvas { width: 100%; height: auto; background: #101016; border-radius: 8px; display: block; }
+.print-views figcaption { font-size: 11px; color: var(--muted); text-align: center; margin-top: 2px; }
+
 /* ── keyframes ── */
 .keys-points { display: grid; grid-template-columns: repeat(3, 1fr); }
 .keys-points button { font-size: 11px; padding: 6px 2px; }
