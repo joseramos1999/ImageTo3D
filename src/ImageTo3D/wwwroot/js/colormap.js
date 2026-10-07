@@ -5,10 +5,11 @@ import { inkValue } from './trace.js';
 /**
  * Transparent (non-logo) pixels are filled with the nearest logo colour so the bevel,
  * the side walls and the mip chain never pick up fringes from the background.
- * `key` is the one the tracer resolved, so texture and geometry agree on what is logo.
+ * `key` is the one the tracer resolved, so texture and geometry agree on what is logo; with
+ * `trace`, its (hand-edited) ink field decides instead, so a recovered area keeps its colours.
  * Returns an OffscreenCanvas.
  */
-export function buildColorImage(img, key, maxDim = 2048) {
+export function buildColorImage(img, key, maxDim = 2048, trace = null) {
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   const s = Math.min(1, maxDim / Math.max(iw, ih));
   const w = Math.max(2, Math.round(iw * s)), h = Math.max(2, Math.round(ih * s));
@@ -22,10 +23,14 @@ export function buildColorImage(img, key, maxDim = 2048) {
   // anti-aliased or JPEG logo is blended with the background, and the side walls
   // repeat whatever color the rim has all the way through the depth.
   let solid = new Uint8Array(w * h);
-  for (let p = 0; p < w * h; p++) {
-    const i = p * 4;
-    solid[p] = inkValue(key, d[i], d[i + 1], d[i + 2], d[i + 3]) > 0.9 ? 1 : 0;
-  }
+  const inkAt = trace
+    ? p => {
+      const x = p % w, y = (p - x) / w;
+      const tx = Math.min(trace.w - 1, Math.floor((x + 0.5) * trace.w / w)), ty = Math.min(trace.h - 1, Math.floor((y + 0.5) * trace.h / h));
+      return trace.field[(ty + 1) * trace.W + tx + 1];
+    }
+    : p => { const i = p * 4; return inkValue(key, d[i], d[i + 1], d[i + 2], d[i + 3]); };
+  for (let p = 0; p < w * h; p++) solid[p] = inkAt(p) > 0.9 ? 1 : 0;
   const radius = Math.max(1, Math.round(Math.max(w, h) / 900));
   for (let i = 0; i < radius; i++) solid = erode(solid, w, h);
   // Near the rim, copy the nearest trusted color exactly; the pyramid fill below

@@ -5,6 +5,7 @@ import { shapesFromOutlines, buildLogoGroup } from './geometry.js';
 import { decodeImage, previewBitmap, ImageTooLargeError, LIMITS } from './imaging.js';
 import { pipeline } from './pipeline.js';
 import { initMaskUI } from './mask-ui.js';
+import { initMaskEditor } from './mask-editor.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, readProjectFile, PROJECT_EXT } from './project.js';
 import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
@@ -51,7 +52,7 @@ let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, out
 let logo = null;       // THREE.Group of piece meshes
 let materials = [];
 let exporting = false, cancelExport = false;
-let maskUI = null;
+let maskUI = null, maskEditor = null;
 
 // ───────── source loading ─────────
 // The image work (tracing, colour texture, mask preview) runs in a Web Worker; only the
@@ -222,6 +223,7 @@ function rebuildOutlines() { requestRetrace('outlines'); }
 /** Anything that mirrors the current source (previews, autosave) refreshes from here. */
 function onSourceChanged() {
   maskUI?.refresh();
+  maskEditor?.refresh();
   renderLayers();
   markDirty();
 }
@@ -1289,7 +1291,9 @@ function initDragDrop() {
 function init() {
   initSliders();
   fx.clip = (axis, value, keepAbove) => stage.setLogoClip(axis, value, keepAbove);
-  maskUI = initMaskUI({ getSource: () => source, isVector: usingVector, commit: op => { requestRetrace(op); markDirty(); } });
+  const commitMask = op => { requestRetrace(op); markDirty(); };
+  maskEditor = initMaskEditor({ getSource: () => source, commit: commitMask });
+  maskUI = initMaskUI({ getSource: () => source, isVector: usingVector, commit: commitMask, openEditor: () => maskEditor.open() });
   initMaterials();
   initAnimations();
   initBackgrounds();
@@ -1367,4 +1371,4 @@ try {
 }
 
 // Handy for debugging from DevTools (F12 in debug builds).
-window.__app = { state, stage, THREE, get logo() { return logo; }, resetPose };
+window.__app = { state, stage, THREE, get logo() { return logo; }, get source() { return source; }, resetPose };

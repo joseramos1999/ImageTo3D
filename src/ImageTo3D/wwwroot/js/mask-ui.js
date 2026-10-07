@@ -23,7 +23,7 @@ const hex = (r, g, b) => '#' + [r, g, b].map(v => Math.round(v).toString(16).pad
  * ui = initMaskUI({ getSource, commit }) where commit(op) applies source.mask:
  * op 'mask' redoes the analysis, 'outlines' only the denoise / holes step.
  */
-export function initMaskUI({ getSource, commit, isVector = () => false }) {
+export function initMaskUI({ getSource, commit, isVector = () => false, openEditor = () => {} }) {
   const canvas = $('#mask-canvas');
   const ctx = canvas.getContext('2d');
   let view = 'split', split = 0.5, picking = false, beforePixels = null;
@@ -64,15 +64,20 @@ export function initMaskUI({ getSource, commit, isVector = () => false }) {
     return v => { input.value = v; paint(); };
   };
   const syncTol = range($('#mask-tol'), 'Umbral', 0, 1, 0.01, 'tolerance', 'mask', v => Math.round(v * 100) + '%');
-  const syncDenoise = range($('#mask-denoise'), 'Limpiar ruido', 0, 10, 1, 'denoise', 'outlines', v => v === 0 ? 'No' : String(v));
+  const syncDenoise = range($('#mask-denoise'), 'Quitar motas', 0, 10, 1, 'denoise', 'outlines', v => v === 0 ? 'No' : String(v));
+  const syncHoles = range($('#mask-holes'), 'Rellenar huecos pequeños', 0, 10, 1, 'holeArea', 'outlines', v => v === 0 ? 'No' : String(v));
+  const syncJoin = range($('#mask-join'), 'Unir fragmentos', 0, 10, 1, 'join', 'mask', v => v === 0 ? 'No' : String(v));
+  $('#mask-edit').onclick = () => openEditor();
 
   $('#mask-invert').addEventListener('change', e => set({ invert: e.target.checked }, 'mask'));
   $('#mask-fill').addEventListener('change', e => set({ fillHoles: e.target.checked }, 'outlines'));
   $('#mask-color').addEventListener('change', e => set({ mode: 'color', color: e.target.value }, 'mask'));
-  // Resets the cut only: the SVG / colour-layer choices and the layers' settings stay.
+  // Resets the automatic cut only: the SVG / colour-layer choices, the layers' settings and
+  // the hand edits stay (those have their own undo and «Quitar todas» in the editor).
   $('#mask-reset').onclick = () => {
     const m = mask() || {};
-    set({ ...DEFAULT_MASK, vector: m.vector ?? true, split: !!m.split, colors: m.colors ?? 'auto', layerStyle: m.layerStyle || {} }, 'mask');
+    set({ ...DEFAULT_MASK, vector: m.vector ?? true, split: !!m.split, colors: m.colors ?? 'auto', layerStyle: m.layerStyle || {},
+      strokes: m.strokes || [], removed: m.removed || [] }, 'mask');
   };
   $('#mask-vector').addEventListener('change', e => set({ vector: e.target.checked }, 'mask'));
 
@@ -147,6 +152,13 @@ export function initMaskUI({ getSource, commit, isVector = () => false }) {
     canvas.classList.toggle('split', view === 'split' && !picking);
     syncTol(m.tolerance);
     syncDenoise(m.denoise);
+    syncHoles(m.holeArea ?? 0);
+    syncJoin(m.join ?? 0);
+    const strokes = m.strokes?.length || 0, removed = m.removed?.length || 0;
+    const note = $('#mask-edits-note');
+    note.hidden = !strokes && !removed;
+    note.textContent = [strokes && `${strokes} trazo${strokes > 1 ? 's' : ''} a mano`, removed && `${removed} pieza${removed > 1 ? 's' : ''} o hueco${removed > 1 ? 's' : ''} quitado${removed > 1 ? 's' : ''}`]
+      .filter(Boolean).join(' · ') + ' (se conservan al restablecer).';
     $('#mask-invert').checked = !!m.invert;
     $('#mask-fill').checked = !!m.fillHoles;
     $('#mask-color').value = m.color;

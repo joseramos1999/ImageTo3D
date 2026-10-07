@@ -22,8 +22,16 @@ const ISO = 0.5;
  *  fillHoles: ignore every hole (solid silhouette)
  *  vector: for an SVG, build from its own paths (vector.js) rather than tracing it
  *  split / colors: trace each colour as its own layer (layers.js); colors 'auto' or 2..8
+ *  holeArea 0..10: also fill holes up to a growing area (on top of denoise)
+ *  join 0..10: closes gaps between nearby fragments (morphological closing of the field)
+ *  strokes: hand edits, [{ m: 'erase'|'restore'|'smooth', r, p: [u, v, u, v…] }] with
+ *           u, v and the radius r in 0..1 of the image (so they fit any resolution)
+ *  removed: [[u, v]…] clicked points: the piece there is dropped, or the hole there filled
  */
-export const DEFAULT_MASK = { mode: 'auto', color: '#ffffff', tolerance: 0.5, invert: false, denoise: 2, fillHoles: false, vector: true, split: false, colors: 'auto' };
+export const DEFAULT_MASK = {
+  mode: 'auto', color: '#ffffff', tolerance: 0.5, invert: false, denoise: 2, fillHoles: false,
+  vector: true, split: false, colors: 'auto', holeArea: 0, join: 0, strokes: [], removed: [],
+};
 
 /** Reads the image into an ink field (0..1 per pixel, 0.5 = the cut). */
 export function inkField(img, mask = DEFAULT_MASK, maxDim = 1000) {
@@ -47,7 +55,91 @@ export function inkField(img, mask = DEFAULT_MASK, maxDim = 1000) {
       field[(y + 1) * W + x + 1] = inkValue(key, data[i], data[i + 1], data[i + 2], data[i + 3]);
     }
   }
-  return { field, W, H, w, h, key, data };
+  const trace = { field, W, H, w, h, key, data };
+  // Clean-up tools: first the automatic gap closing, then the hand edits (which always win).
+  if (mask.join > 0) closeGaps(trace, Math.round(mask.join * Math.max(1, Math.max(w, h) / 1000)));
+  if (mask.strokes?.length) applyStrokes(trace, mask.strokes);
+  return trace;
+}
+
+/** Morphological closing of the soft field (grow, then shrink back): fragments closer than
+ *  about 2 × radius pixels join up, while the outer shape keeps its size. */
+export function closeGaps({ field, W, H }, radius) {
+  let cur = field;
+  const pass = (src, pick) => {
+    const out = new Float32Array(src.length);
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const p = y * W + x;
+      let v = src[p];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) v = pick(v, src[p + dy * W + dx]);
+      out[p] = v;
+    }
+    return out;
+  };
+  for (let i = 0; i < radius; i++) cur = pass(cur, Math.max);
+  for (let i = 0; i < radius; i++) cur = pass(cur, Math.min);
+  field.set(cur);
+}
+
+/**
+ * Hand edits painted with the brush, in order: 'erase' clears the logo under the brush,
+ * 'restore' makes it logo (parts the mask took for background), 'smooth' blurs the field
+ * there so its outline comes out rounder. Brush edges are soft (1.5 px).
+ */
+export function applyStrokes({ field, W, H, w, h }, strokes) {
+  const size = Math.max(w, h);
+  let smooth = null;
+  for (const st of strokes) {
+    const R = Math.max(0.75, st.r * size), pts = st.p || [];
+    if (st.m === 'smooth' && !smooth) smooth = new Float32Array(W * H);
+    const stamp = (x0, y0, x1, y1) => {
+      const minX = Math.max(1, Math.floor(Math.min(x0, x1) - R - 2)), maxX = Math.min(W - 2, Math.ceil(Math.max(x0, x1) + R + 2));
+      const minY = Math.max(1, Math.floor(Math.min(y0, y1) - R - 2)), maxY = Math.min(H - 2, Math.ceil(Math.max(y0, y1) + R + 2));
+      const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+      for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+        // Distance from this field sample to the segment (field sample x is image pixel x - 1).
+        const px = x - 0.5, py = y - 0.5;
+        const t = len2 ? Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / len2)) : 0;
+        const d = Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy));
+        const a = Math.max(0, Math.min(1, (R - d) / 1.5 + 0.5));
+        if (a <= 0) continue;
+        const i = y * W + x;
+        if (st.m === 'erase') field[i] *= 1 - a;
+        else if (st.m === 'restore') field[i] = Math.max(field[i], a);
+        else if (st.m === 'smooth') smooth[i] = Math.max(smooth[i], a);
+      }
+    };
+    const P = i => [pts[i] * w, pts[i + 1] * h];
+    if (pts.length === 2) stamp(...P(0), ...P(0));
+    for (let i = 0; i + 3 < pts.length; i += 2) stamp(...P(i), ...P(i + 2));
+  }
+  if (!smooth) return;
+  // Blur (three box passes ≈ Gaussian) and blend it in where the smoothing brush went.
+  const r = Math.max(2, Math.round(size / 250));
+  let blur = field.slice();
+  for (let k = 0; k < 3; k++) blur = boxBlur(blur, W, H, r);
+  for (let i = 0; i < field.length; i++) if (smooth[i] > 0) field[i] += (blur[i] - field[i]) * smooth[i];
+}
+
+function boxBlur(src, W, H, r) {
+  const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+  for (let y = 0; y < H; y++) {
+    let acc = 0;
+    for (let x = -r; x <= r; x++) acc += src[y * W + Math.max(0, Math.min(W - 1, x))];
+    for (let x = 0; x < W; x++) {
+      tmp[y * W + x] = acc / (2 * r + 1);
+      acc += src[y * W + Math.min(W - 1, x + r + 1)] - src[y * W + Math.max(0, x - r)];
+    }
+  }
+  for (let x = 0; x < W; x++) {
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += tmp[Math.max(0, Math.min(H - 1, y)) * W + x];
+    for (let y = 0; y < H; y++) {
+      out[y * W + x] = acc / (2 * r + 1);
+      acc += tmp[Math.min(H - 1, y + r + 1) * W + x] - tmp[Math.max(0, y - r) * W + x];
+    }
+  }
+  return out;
 }
 
 const hexRgb = hex => {
@@ -262,10 +354,12 @@ export function simplifyLoop(loop, eps) {
  */
 const DENOISE_AREA = [0, 10, 40, 120, 300, 700, 1500, 3000, 6000, 12000, 25000];   // px² at 1000 px
 
-export function buildOutlines(rawLoops, { W, H }, smoothness = 2, { denoise = 2, fillHoles = false } = {}) {
+export function buildOutlines(rawLoops, { W, H, w, h }, smoothness = 2, { denoise = 2, fillHoles = false, holeArea = 0, removed = [] } = {}) {
   const px = Math.max(W, H) / 1000;           // tolerances scale with trace resolution
   // Speck and pinhole filter (applies to outlines and holes alike).
   const minArea = Math.max(4, DENOISE_AREA[Math.max(0, Math.min(10, Math.round(denoise)))] * px * px);
+  // Holes can also be filled up to a larger area of their own.
+  const minHole = Math.max(minArea, DENOISE_AREA[Math.max(0, Math.min(10, Math.round(holeArea)))] * px * px);
   const iterations = [0, 1, 3, 5, 8, 12, 16][Math.max(0, Math.min(6, smoothness))];
 
   const loops = rawLoops
@@ -277,16 +371,28 @@ export function buildOutlines(rawLoops, { W, H }, smoothness = 2, { denoise = 2,
   // All loops share one orientation convention; the largest one is always an outline.
   const outerSign = Math.sign(loops.reduce((m, l) => Math.abs(l.area) > Math.abs(m.area) ? l : m).area);
   const outers = loops.filter(l => Math.sign(l.area) === outerSign).map(l => ({ outer: l.pts, area: Math.abs(l.area), holes: [] }));
-  const holes = loops.filter(l => Math.sign(l.area) !== outerSign);
+  const holes = loops.filter(l => Math.sign(l.area) !== outerSign && Math.abs(l.area) > minHole);
   outers.sort((a, b) => a.area - b.area);   // smallest first → innermost container wins
+  let result;
   if (fillHoles) {
     // A solid silhouette: holes go, and so do islands that sat inside them.
-    const solid = outers.filter(o => !outers.some(p => p !== o && p.area > o.area && pointInLoop(o.outer[0], p.outer)));
-    return solid;
+    result = outers.filter(o => !outers.some(p => p !== o && p.area > o.area && pointInLoop(o.outer[0], p.outer)));
+  } else {
+    for (const hl of holes) {
+      const owner = outers.find(o => o.area > Math.abs(hl.area) && pointInLoop(hl.pts[0], o.outer));
+      if (owner) owner.holes.push(hl.pts);
+    }
+    result = outers;
   }
-  for (const h of holes) {
-    const owner = outers.find(o => o.area > Math.abs(h.area) && pointInLoop(h.pts[0], o.outer));
-    if (owner) owner.holes.push(h.pts);
+  // «Quitar pieza»: each clicked point drops the innermost piece under it — or, if it falls in
+  // one of that piece's holes, fills the hole instead.
+  for (const [u, v] of removed || []) {
+    const p = { x: u * (w ?? W - 2) + 0.5, y: v * (h ?? H - 2) + 0.5 };
+    const hit = result.find(o => pointInLoop(p, o.outer));   // smallest first
+    if (!hit) continue;
+    const hole = hit.holes.findIndex(hl => pointInLoop(p, hl));
+    if (hole >= 0) hit.holes.splice(hole, 1);
+    else result = result.filter(o => o !== hit);
   }
-  return outers;
+  return result;
 }

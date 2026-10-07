@@ -85,9 +85,15 @@
         <div class="row"><label for="mask-color">Color del fondo</label><input type="color" id="mask-color"></div>
         <div class="slider" id="mask-tol"></div>
         <div class="slider" id="mask-denoise"></div>
+        <div class="slider" id="mask-holes"></div>
+        <div class="slider" id="mask-join"></div>
         <div class="row"><label>Invertir</label><label class="switch"><input type="checkbox" id="mask-invert" aria-label="Invertir"><span></span></label></div>
         <div class="row"><label>Rellenar agujeros</label><label class="switch"><input type="checkbox" id="mask-fill" aria-label="Rellenar agujeros"><span></span></label></div>
-        <button class="btn small mask-reset" id="mask-reset">Restablecer recorte</button>
+        <div class="row mask-actions">
+          <button class="btn small" id="mask-edit" title="Pincel para borrar o recuperar zonas, suavizar bordes y quitar piezas o huecos">Editar a mano…</button>
+          <button class="btn small mask-reset" id="mask-reset">Restablecer recorte</button>
+        </div>
+        <p class="note" id="mask-edits-note" hidden></p>
         </div>
       </section>
 
@@ -222,6 +228,28 @@
       </section>
     </aside>
   </main>
+
+  <div class="modal" id="mask-editor" hidden role="dialog" aria-modal="true" aria-labelledby="me-title">
+    <div class="modal-card editor-card">
+      <div class="editor-head">
+        <div class="modal-title" id="me-title">Editar recorte</div>
+        <button class="btn icon small" id="me-close" title="Cerrar (Esc)" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="editor-tools">
+        <div class="seg" id="me-tool" role="group" aria-label="Herramienta">
+          <button data-v="erase" title="Pinta para quitar zonas del logo">Borrar</button>
+          <button data-v="restore" title="Pinta para recuperar zonas que el recorte tomó por fondo">Recuperar</button>
+          <button data-v="smooth" title="Pinta sobre un borde para redondearlo">Suavizar</button>
+          <button data-v="remove" title="Clic en una pieza para quitarla, o en un hueco para rellenarlo">Quitar pieza</button>
+        </div>
+        <div class="slider editor-size" id="me-size"></div>
+        <button class="btn small" id="me-undo">Deshacer edición</button>
+        <button class="btn small" id="me-clear">Quitar todas</button>
+      </div>
+      <div class="editor-stage" id="me-stage"><canvas id="me-canvas"></canvas></div>
+      <p class="note" id="me-hint"></p>
+    </div>
+  </div>
 
   <div class="modal" id="progress" hidden>
     <div class="modal-card">

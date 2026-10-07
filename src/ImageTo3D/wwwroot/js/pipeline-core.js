@@ -30,7 +30,7 @@ export class PipelineCore {
         layers = colors.map(c => ({ color: hex(c.rgb), share: c.share }));
       }
     }
-    const color = buildColorImage(this.image, trace.key);
+    const color = buildColorImage(this.image, trace.key, undefined, trace);
     return { meta: { w: trace.w, h: trace.h, W: trace.W, H: trace.H, layers }, key: trace.key, color };
   }
 
