@@ -15,10 +15,11 @@ Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la �
 ## Qué hace
 
 - **SVG vectorial:** los SVG se construyen desde sus propios trazados: curvas exactas, agujeros según su fill-rule, todos sus colores (también degradados) y el orden de pintado, con cada color en su capa. Si el SVG tiene textos sin convertir o imágenes incrustadas, se traza como imagen; también se puede elegir así en «Recorte».
+- **Capas:** con «Separar por colores» (o en un SVG, sus colores) cada color del logo es una capa: icono, texto, borde… Cada capa tiene su grosor (sale hacia delante), su material y se puede ocultar, y hay animaciones que las usan («Por capas», «Capas fuera», «Despiece»).
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, limpieza de ruido, inversión, relleno de agujeros y una vista previa antes / comparar / después.
 - **Geometría:** profundidad, bisel, suavizado y escala.
 - **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
-- **Animación:** 137 animaciones (57 bucles, 41 intros y 39 salidas; algunas revelan el logo con planos de recorte) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 21 estilos **Predeterminados** que aplican la escena completa con un clic.
+- **Animación:** 140 animaciones (58 bucles, 42 intros y 40 salidas; algunas revelan el logo con planos de recorte) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 21 estilos **Predeterminados** que aplican la escena completa con un clic.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
 - **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI en Motion JPEG (el más compatible) o sin compresión con canal alfa (como el códec «Ninguno» con «RGB + alfa» de After Effects) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
@@ -33,9 +34,11 @@ ImageTo3D.exe (WPF, .NET 10)
          │   ├─ js/trace.js       llave de recorte → campo de "tinta" → marching squares interpolado → contornos
          │   └─ js/colormap.js    textura de color sin halos (erosión + dilatación + push-pull)
          ├─ js/vector.js          SVG real: trazados de SVGLoader → contornos por capas y textura de color
+         ├─ js/layers.js          capas por color en imágenes trazadas (k-means en Lab, un campo por color)
+         ├─ js/layers-ui.js       panel Capas: grosor, material y visibilidad por capa
          ├─ js/geometry.js        contornos → ExtrudeGeometry con bisel y UV planares (hilo principal)
          ├─ js/materials.js       24 materiales
-         ├─ js/animations.js      137 animaciones, funciones puras del tiempo
+         ├─ js/animations.js      140 animaciones, funciones puras del tiempo
          ├─ js/presets.js         21 estilos predeterminados
          ├─ js/sequence-ui.js     pestaña Secuencia: intro, bucle × N y salida
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara

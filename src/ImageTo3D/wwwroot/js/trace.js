@@ -21,8 +21,9 @@ const ISO = 0.5;
  *  denoise 0..10: removes specks and pinholes smaller than a growing area
  *  fillHoles: ignore every hole (solid silhouette)
  *  vector: for an SVG, build from its own paths (vector.js) rather than tracing it
+ *  split / colors: trace each colour as its own layer (layers.js); colors 'auto' or 2..8
  */
-export const DEFAULT_MASK = { mode: 'auto', color: '#ffffff', tolerance: 0.5, invert: false, denoise: 2, fillHoles: false, vector: true };
+export const DEFAULT_MASK = { mode: 'auto', color: '#ffffff', tolerance: 0.5, invert: false, denoise: 2, fillHoles: false, vector: true, split: false, colors: 'auto' };
 
 /** Reads the image into an ink field (0..1 per pixel, 0.5 = the cut). */
 export function inkField(img, mask = DEFAULT_MASK, maxDim = 1000) {
@@ -46,7 +47,7 @@ export function inkField(img, mask = DEFAULT_MASK, maxDim = 1000) {
       field[(y + 1) * W + x + 1] = inkValue(key, data[i], data[i + 1], data[i + 2], data[i + 3]);
     }
   }
-  return { field, W, H, w, h, key };
+  return { field, W, H, w, h, key, data };
 }
 
 const hexRgb = hex => {

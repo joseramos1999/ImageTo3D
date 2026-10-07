@@ -52,6 +52,10 @@ const sink = (sy, h) => -(1 - sy) * h / 2;
 /** Staggered 0..1 progress for one piece: pieces start one after another by `rank`. */
 const stagger = (q, rank, spread = 0.45) => clamp01((q - rank * spread) / (1 - spread));
 
+/** A piece's place in the stack of colour / SVG layers (0 = bottom … 1 = top). A logo with a
+ *  single layer falls back to the height of the piece, so layer animations still move. */
+const layerRank = piece => (piece.parent?.userData.layerCount > 1 ? piece.userData.rankLayer : piece.userData.rankY) ?? 0;
+
 // m = motion group, ps = pieces, p = phase 0..1 within the cycle, t = seconds
 export const ANIMATIONS = [
   { id: 'none', label: 'Estático', kind: 'loop', period: 0, apply() {} },
@@ -313,6 +317,15 @@ export const ANIMATIONS = [
       if (!((p > 0.02 && p < 0.14) || (p > 0.55 && p < 0.6))) return;
       const f = Math.floor(p * 90);
       ps.forEach((piece, i) => { if (hash(f * 31 + i * 7) > 0.55) piece.visible = false; });
+    } },
+  { id: 'layer-split', label: 'Despiece', kind: 'loop', period: 4, pieces: true, still: 0.45,
+    // Exploded view: the layers part along the depth, the bottom one back and the top one
+    // forward, while the logo turns so the gap shows, and come back together.
+    apply: ({ m, ps, p }) => {
+      const k = Math.pow(Math.sin(Math.PI * p), 2);
+      ps.forEach(piece => { piece.position.z += (layerRank(piece) - 0.35) * 2.2 * k; });
+      m.rotation.y = Math.sin(TAU * p) * 0.55;
+      m.rotation.x = -0.18 * k;
     } },
   { id: 'equalizer', label: 'Ecualizador', kind: 'loop', period: 2, pieces: true, still: 0.3,
     // Each piece jumps like a bar of a music visualiser, from its base, at its own whole-number rate.
@@ -576,6 +589,15 @@ export const ANIMATIONS = [
       piece.scale.setScalar(Math.max(0.001, e));
       piece.rotation.z = (1 - clamp01(e)) * 0.6;
     }) },
+  { id: 'intro-layers', label: 'Por capas', kind: 'intro', duration: 2.2, pieces: true,
+    // The layers arrive one after another from in front of the camera, the bottom one first,
+    // and settle onto the one below.
+    apply: ({ ps, q }) => ps.forEach(piece => {
+      const s = stagger(q, layerRank(piece), 0.6), e = easeOutBack(s, 1.3);
+      piece.position.z += (1 - e) * 7;
+      piece.rotation.x = (1 - e) * -0.5;
+      piece.scale.setScalar(Math.max(0.001, clamp01(s * 3)));
+    }) },
   { id: 'intro-orbit', label: 'Órbita', kind: 'intro', duration: 2.4,
     // Spirals in from far away, circling round to land in front of the camera.
     apply: ({ m, q }) => {
@@ -676,6 +698,7 @@ const REVERSED_INTROS = [
   ['intro-wipe', 'outro-wipe', 'Cerrar cortina'],
   ['intro-fan', 'outro-fan', 'Cerrar abanico'],
   ['intro-boomerang', 'outro-boomerang', 'Bumerán fuera'],
+  ['intro-layers', 'outro-layers', 'Capas fuera'],
 ];
 for (const [from, id, label] of REVERSED_INTROS) {
   const src = ANIMATIONS.find(a => a.id === from);

@@ -19,6 +19,7 @@ import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
 import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
+import { renderLayersPanel } from './layers-ui.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -221,13 +222,56 @@ function rebuildOutlines() { requestRetrace('outlines'); }
 /** Anything that mirrors the current source (previews, autosave) refreshes from here. */
 function onSourceChanged() {
   maskUI?.refresh();
+  renderLayers();
   markDirty();
+}
+
+// ───────── layers ─────────
+/** The current source's layers: an SVG's (paint-order colour runs) or the traced colours. */
+function sourceLayers() {
+  if (!source) return [];
+  const count = layer => source.outlines?.filter(o => (o.layer ?? 0) === layer).length || 0;
+  const pieces = n => `${n} pieza${n === 1 ? '' : 's'}`;
+  if (usingVector()) return source.vector.layers.map((l, i) => ({ index: i, color: l.color, gradient: !!l.gradient, detail: pieces(count(i)) }));
+  return (source.meta?.layers || []).map((l, i) => ({ index: i, color: l.color, detail: `${Math.round(l.share * 100)} %` }));
+}
+
+/** Per-layer settings, only while the logo actually has several layers. */
+function layerStyleOf(layer) {
+  return { depth: 1, visible: true, material: null, ...(source?.mask.layerStyle?.[layer] || {}) };
+}
+const hasLayers = () => sourceLayers().length > 1;
+
+function renderLayers() {
+  const box = $('#layers-panel');
+  if (!box) return;
+  $('#layers-sec').hidden = !source;
+  if (!source) return;
+  renderLayersPanel(box, {
+    layers: sourceLayers(),
+    raster: !usingVector(),
+    split: !!source.mask.split,
+    colors: source.mask.colors ?? 'auto',
+  }, layerStyleOf, {
+    // Changing how layers are found renumbers them: their settings start over.
+    split: on => { Object.assign(source.mask, { split: on, layerStyle: {} }); requestRetrace('mask'); markDirty(); },
+    colors: v => { Object.assign(source.mask, { colors: v, layerStyle: {} }); requestRetrace('mask'); markDirty(); },
+    style: (layer, patch, geometry) => {
+      const all = { ...(source.mask.layerStyle || {}) };
+      all[layer] = { ...layerStyleOf(layer), ...patch };
+      source.mask.layerStyle = all;
+      if (geometry) { rebuildMeshes(); updateHud(); } else applyMaterials();
+      renderLayers();
+      markDirty();
+    },
+  });
 }
 
 function rebuildMeshes() {
   if (!source) return;
   const old = logo;
-  logo = buildLogoGroup(source.shapeSet, { depth: state.depth, bevel: state.bevel, smoothness: state.smooth });
+  logo = buildLogoGroup(source.shapeSet, { depth: state.depth, bevel: state.bevel, smoothness: state.smooth,
+    layerStyle: hasLayers() ? layerStyleOf : null });
   applyMaterials();
   stage.setLogo(logo);
   updateFloorForAnim();
@@ -260,11 +304,30 @@ function syncTransparency() {
 function applyMaterials() {
   if (!logo) return;
   const old = materials;
-  materials = createMaterials(state.material, {
-    logoMap: source?.colorTex, color: state.color, sideMode: state.sideMode, sideColor: state.sideColor,
-  });
+  const opts = { logoMap: source?.colorTex, color: state.color, sideMode: state.sideMode, sideColor: state.sideColor };
+  const base = createMaterials(state.material, opts);
+  // With layers, each piece is one colour. A layer with its own material takes that colour as
+  // the tint (plastic in that colour…), and "logo colours" are drawn flat in it, faces and
+  // side walls: sampling the artwork right at a layer's edge would mix in the neighbour's
+  // colour and leave a thin line. Only an SVG gradient keeps the artwork on its face.
+  const sets = new Map();
+  const layerInfo = sourceLayers();
+  const forLayer = layer => {
+    if (!hasLayers()) return base;
+    const info = layerInfo[layer] || {}, color = info.color || state.color;
+    const id = layerStyleOf(layer).material || state.material;
+    const key = id + color;
+    if (sets.has(key)) return sets.get(key);
+    // As dim as the textured walls are (×0.72), so a layered logo reads the same.
+    const sides = state.sideMode === 'logo' ? { sideMode: 'custom', sideColor: '#' + new THREE.Color(color).multiplyScalar(0.72).getHexString() } : {};
+    const mats = createMaterials(id, { ...opts, ...sides, ...(layerStyleOf(layer).material ? { color } : {}) });
+    if (id === 'logo' && !info.gradient) { mats[0].map = null; mats[0].color.set(color); mats[0].needsUpdate = true; }
+    sets.set(key, mats);
+    return mats;
+  };
+  logo.children.forEach(m => { m.material = forLayer(m.userData.layer ?? 0); });
+  materials = [...base, ...[...sets.values()].flat()];
   new Set(materials).forEach(m => stage.decorateMaterial(m));
-  logo.children.forEach(m => { m.material = materials; });
   if (old.length) disposeMaterials(old);
 }
 
@@ -672,7 +735,8 @@ async function restoreEntry(entry) {
   historyTimer = 0;
   try {
     if (JSON.stringify(entry.mask) !== JSON.stringify(source.mask)) {
-      Object.assign(source.mask, entry.mask);
+      // Replaced, not merged: keys the snapshot lacks (layer settings added since) must go.
+      source.mask = { ...DEFAULT_MASK, ...entry.mask };
       requestRetrace('mask');
     }
     applySettings(entry.settings);

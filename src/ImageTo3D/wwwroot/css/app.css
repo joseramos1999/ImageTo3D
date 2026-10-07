@@ -352,6 +352,18 @@ input[type=color] {
 .seq-reps { display: flex; align-items: center; gap: 6px; }
 .seq-reps-label { font-size: 12px; color: var(--muted); margin-right: auto; }
 .seq-hint { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+
+/* ── layers ── */
+.layer-list { display: grid; gap: 8px; margin-top: 10px; }
+.layer { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: grid; gap: 6px; }
+.layer.hidden-layer { opacity: .55; }
+.layer-head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.layer-swatch { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); flex: none; }
+.layer-name { font-weight: 600; }
+.layer-detail { color: var(--muted); margin-right: auto; font-variant-numeric: tabular-nums; }
+.layer-eye { width: 28px; padding: 2px 0; font-size: 13px; }
+.layer .slider { margin-top: 0; }
+.layers-count { max-width: 150px; }
 .seq-reps .btn { width: 28px; padding: 3px 0; font-size: 14px; }
 .seq-count { min-width: 22px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .seq-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 2px; }

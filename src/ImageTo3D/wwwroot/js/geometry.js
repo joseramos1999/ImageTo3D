@@ -54,7 +54,9 @@ function planarUV(uvOf) {
 /**
  * Builds the logo: a Group with one Mesh per outline. Each mesh is centred on its
  * own pivot (userData.home) so per-piece animations can move pieces individually.
- * opts: { depth, bevel, smoothness }
+ * opts: { depth, bevel, smoothness, layerStyle? }
+ * layerStyle(layer) → { depth: multiplier, visible } for colour / SVG layers: a thicker layer
+ * grows toward the front only, so every layer keeps the same back plane.
  */
 export function buildLogoGroup(shapeSet, opts) {
   const { shapes, uvOf } = shapeSet;
@@ -63,12 +65,17 @@ export function buildLogoGroup(shapeSet, opts) {
   const layerOf = i => shapeSet.layers?.[i] ?? 0;
   const top = Math.max(0, ...(shapeSet.layers || [0]));
   const step = top ? Math.min(0.006, 0.05 / top) : 0;
+  const styleOf = l => ({ depth: 1, visible: true, ...(opts.layerStyle?.(l) || {}) });
   const group = new THREE.Group();
   const bevel = Math.max(0, opts.bevel);
   const uvGen = planarUV(uvOf);
 
   shapes.forEach((shape, i) => {
-    const depth = opts.depth + layerOf(i) * step;
+    const layer = layerOf(i), style = styleOf(layer);
+    if (!style.visible) return;
+    // From the shared back plane (pushed back a hair per layer, like the front) to its own front.
+    const bias = layer * step / 2;
+    const depth = opts.depth * Math.max(0.05, style.depth) + 2 * bias;
     let geo = new THREE.ExtrudeGeometry(shape, {
       depth,
       curveSegments: 2,
@@ -79,7 +86,7 @@ export function buildLogoGroup(shapeSet, opts) {
       bevelSegments: Math.max(1, Math.min(6, 1 + opts.smoothness)),
       UVGenerator: uvGen,
     });
-    geo.translate(0, 0, -depth / 2);
+    geo.translate(0, 0, -opts.depth / 2 - bias);
     // Smooth shading across the bevel and curved walls, hard crease at real corners.
     geo = toCreasedNormals(geo, THREE.MathUtils.degToRad(35));
     flattenCaps(geo);
@@ -97,7 +104,7 @@ export function buildLogoGroup(shapeSet, opts) {
     mesh.userData.home = center.clone();
     mesh.userData.extent = geo.boundingBox.getSize(new THREE.Vector3());   // to scale a piece from its base
     mesh.userData.index = i;
-    mesh.userData.layer = layerOf(i);
+    mesh.userData.layer = layer;
     group.add(mesh);
   });
 
@@ -114,7 +121,9 @@ export function buildLogoGroup(shapeSet, opts) {
     m.userData.rankR = h.length() / maxR;
     m.userData.rand = hash01(i * 7.13 + 1.7);
     m.userData.rand2 = hash01(i * 3.91 + 9.2);
+    m.userData.rankLayer = top ? m.userData.layer / top : 0;
   });
+  group.userData.layerCount = top + 1;
   group.userData.size = size;
   return group;
 }

@@ -69,7 +69,11 @@ export function initMaskUI({ getSource, commit, isVector = () => false }) {
   $('#mask-invert').addEventListener('change', e => set({ invert: e.target.checked }, 'mask'));
   $('#mask-fill').addEventListener('change', e => set({ fillHoles: e.target.checked }, 'outlines'));
   $('#mask-color').addEventListener('change', e => set({ mode: 'color', color: e.target.value }, 'mask'));
-  $('#mask-reset').onclick = () => set({ ...DEFAULT_MASK, vector: mask()?.vector ?? true }, 'mask');
+  // Resets the cut only: the SVG / colour-layer choices and the layers' settings stay.
+  $('#mask-reset').onclick = () => {
+    const m = mask() || {};
+    set({ ...DEFAULT_MASK, vector: m.vector ?? true, split: !!m.split, colors: m.colors ?? 'auto', layerStyle: m.layerStyle || {} }, 'mask');
+  };
   $('#mask-vector').addEventListener('change', e => set({ vector: e.target.checked }, 'mask'));
 
   // ── preview view mode ──
