@@ -370,6 +370,7 @@ export class Stage {
         dir(0xffffff, 1.6, 0, 4, -6);
     }
     this.scene.environmentIntensity = env * gain;
+    this.envBase = env * gain;
     this.keyLight = key;
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -470,6 +471,8 @@ export class Stage {
    * and only changes where its highlights fall.
    */
   setLightAngle(azimuthDeg = 0, elevationDeg = 0) {
+    this.lightAzDeg = azimuthDeg;
+    this.lightElDeg = elevationDeg;
     const az = THREE.MathUtils.degToRad(azimuthDeg), el = THREE.MathUtils.degToRad(-elevationDeg);
     this.lights.rotation.set(el, az, 0, 'YXZ');
     this.lights.updateMatrixWorld(true);
@@ -584,6 +587,7 @@ export class Stage {
 
     const savedFov = cam.fov;
     if (this.cameraMove !== 'none') this.applyCameraMove(cycle);
+    if (this.fx.cameraWanted) this.applyCameraKeys(this.fx.cameraWanted);
 
     if (transparent || this.transparent) {
       // Straight to the canvas with alpha: the post-processing chain would flatten it.
@@ -604,6 +608,17 @@ export class Stage {
     cam.position.copy(savedPos);
     cam.quaternion.copy(savedQuat);
     if (cam.fov !== savedFov) { cam.fov = savedFov; cam.updateProjectionMatrix(); }
+  }
+
+  /** Keyframed camera (keys.js): closer / farther, around and up or down, on top of the rest. */
+  applyCameraKeys({ zoom = 1, orbit = 0, height = 0 }) {
+    const cam = this.camera, target = this.controls.target;
+    const sph = new THREE.Spherical().setFromVector3(cam.position.clone().sub(target));
+    sph.radius /= Math.max(0.1, zoom);
+    sph.theta += orbit;
+    sph.phi = THREE.MathUtils.clamp(sph.phi - height, 0.12, Math.PI - 0.12);
+    cam.position.copy(target).add(new THREE.Vector3().setFromSpherical(sph));
+    cam.lookAt(target);
   }
 
   /**

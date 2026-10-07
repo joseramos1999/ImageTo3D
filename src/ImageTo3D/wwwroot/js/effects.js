@@ -8,6 +8,9 @@
 //   outline(progress, opacity)   — glowing ribbons draw each piece's outline.
 //   portal(progress)             — a glowing ring the logo comes through (with a depth clip).
 //   shine(position, strength)    — drives the shine band (the «Destello» sweep) directly.
+//   opacity(value) / glow(value) — fades the logo / makes it glow in its own colours.
+//   camera({ zoom, orbit, height }) / light({ az, el, gain }) — on top of the user's framing
+//                                  and lighting (keyframes, keys.js).
 import * as THREE from 'three';
 import { PORTAL_Z } from './animations.js';
 
@@ -71,7 +74,12 @@ export class Effects {
       uFxType: { value: 0 }, uFxAmt: { value: 0 }, uFxPhase: { value: 0 }, uFxScale: { value: 0.5 },
       uFxLogo: { value: new THREE.Matrix4() }, uFxLogoInv: { value: new THREE.Matrix4() },
       uFxDissolve: { value: -1 }, uFxEdge: { value: new THREE.Color('#ffb347') },
+      uFxGlow: { value: 0 },
     };
+    this.opacityWanted = null;
+    this.cameraWanted = null;
+    this.lightWanted = null;
+    this.lightApplied = false;
     this.dissolveState = null;
     this.outlineState = null;
     this.portalState = null;
@@ -106,7 +114,7 @@ export class Effects {
         vFxLogo = fxPL;
         #include <project_vertex>`);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vFxLogo;\nuniform float uFxDissolve;\nuniform vec3 uFxEdge;\n' + NOISE_GLSL)
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFxLogo;\nuniform float uFxDissolve, uFxGlow;\nuniform vec3 uFxEdge;\n' + NOISE_GLSL)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         float fxEdge = 0.0;
         if (uFxDissolve > -0.5) {
@@ -114,7 +122,7 @@ export class Effects {
           if (fxN < uFxDissolve) discard;
           fxEdge = 1.0 - smoothstep(0.0, 0.018, fxN - uFxDissolve);
         }`)
-      .replace('#include <opaque_fragment>', 'outgoingLight += uFxEdge * fxEdge * 3.0;\n#include <opaque_fragment>');
+      .replace('#include <opaque_fragment>', 'outgoingLight += uFxEdge * fxEdge * 3.0 + diffuseColor.rgb * uFxGlow * 1.6;\n#include <opaque_fragment>');
   }
 
   /** Per frame, before rendering: logo-space matrices and the particle / ribbon systems. */
@@ -128,6 +136,50 @@ export class Effects {
     this.updateDissolve();
     this.updateOutline();
     this.updatePortal();
+    this.updateOpacity();
+    this.updateLight();
+  }
+
+  // ── opacity, glow ──
+  opacity(value) { this.opacityWanted = value; }
+  glow(value) { this.uniforms.uFxGlow.value = value ?? 0; }
+
+  /** Logo materials fade by their opacity (made transparent the first time it is needed). */
+  updateOpacity() {
+    const logo = this.stage.logo;
+    if (!logo) return;
+    const v = this.opacityWanted;
+    if (v == null && !this.opacityApplied) return;
+    const seen = new Set();
+    for (const piece of logo.children) {
+      for (const m of Array.isArray(piece.material) ? piece.material : [piece.material]) {
+        if (!m || seen.has(m)) continue;
+        seen.add(m);
+        m.userData.baseOpacity ??= m.opacity;
+        if (v != null && v < 1 && !m.transparent) { m.transparent = true; m.needsUpdate = true; }
+        m.opacity = m.userData.baseOpacity * (v ?? 1);
+      }
+    }
+    this.opacityApplied = v != null;
+  }
+
+  // ── camera, light ──
+  camera(value) { this.cameraWanted = value; }
+  light(value) { this.lightWanted = value; }
+
+  /** Turns the lights / scales their strength on top of the user's choice; undone when off. */
+  updateLight() {
+    const st = this.stage, want = this.lightWanted;
+    if (!want && !this.lightApplied) return;
+    const az = (st.lightAzDeg ?? 0) + (want?.az ?? 0), el = (st.lightElDeg ?? 0) + (want?.el ?? 0);
+    const rad = THREE.MathUtils.degToRad;
+    st.lights.rotation.set(rad(-el), rad(az), 0, 'YXZ');
+    st.lights.updateMatrixWorld(true);
+    st.scene.environmentRotation.set(rad(-el), rad(az), 0, 'YXZ');
+    const gain = want?.gain ?? 1;
+    st.lights.traverse(l => { if (l.isLight) { l.userData.base ??= l.intensity; l.intensity = l.userData.base * gain; } });
+    st.scene.environmentIntensity = (st.envBase ?? st.scene.environmentIntensity) * gain;
+    this.lightApplied = !!want;
   }
 
   /** A new logo: drop everything built from the old one. */

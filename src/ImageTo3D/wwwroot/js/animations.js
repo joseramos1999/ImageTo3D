@@ -932,6 +932,7 @@ export const fx = {
   clip: () => {},
   // effects.js (installed by the app): see that module for what each does.
   deform: () => {}, dissolve: () => {}, outline: () => {}, portal: () => {}, shine: () => {},
+  opacity: () => {}, glow: () => {}, camera: () => {}, light: () => {},
   /** How much of an effect a loop shows: 1, except where a sequence eases into / out of it. */
   weight: 1,
 };
@@ -945,6 +946,10 @@ export function resetPose(motion, pieces) {
   fx.outline(null);
   fx.portal(null);
   fx.shine(null);
+  fx.opacity(null);
+  fx.glow(null);
+  fx.camera(null);
+  fx.light(null);
   motion.position.set(0, 0, 0);
   motion.rotation.set(0, 0, 0);
   motion.scale.set(1, 1, 1);

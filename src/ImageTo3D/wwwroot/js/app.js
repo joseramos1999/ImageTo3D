@@ -22,6 +22,8 @@ import { demoLogo, textLogo } from './sources.js';
 import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
 import { renderLayersPanel } from './layers-ui.js';
 import { initRelief, reliefOptions } from './relief-ui.js';
+import { keysTimeline, DEFAULT_KEYS } from './keys.js';
+import { renderKeysPanel } from './keys-ui.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -30,6 +32,7 @@ const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
   anim: 'rotate-y', animTab: 'preset', speed: 1,
+  keys: structuredClone(DEFAULT_KEYS),
   mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
@@ -986,11 +989,28 @@ function renderAnimationList() {
     });
     return;
   }
+  if (state.animTab === 'keys') {
+    renderKeysPanel(el, state, {
+      change: keys => { state.keys = keys; useKeys(); },
+      // While dragging: the preview follows, nothing is saved or redrawn yet.
+      live: keys => { state.keys = keys; if (state.mode !== 'keys') { state.mode = 'keys'; syncModeMarks(); } },
+      use: useKeys,
+    });
+    return;
+  }
   chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
     state.mode = 'single';   // picking a single animation leaves the sequence
     onAnimationChanged();
     if (a.round) stage.frame(true);
   }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
+}
+
+/** Makes the keyframes the active animation (after any change in their panel). */
+function useKeys() {
+  state.mode = 'keys';
+  onAnimationChanged();
+  if (state.animTab === 'keys') renderAnimationList();
+  save();
 }
 
 /** Makes the "Secuencia" the active animation (after any change in its panel). */
@@ -1015,7 +1035,7 @@ function onAnimationChanged() {
 function syncModeMarks() {
   const single = getAnimation(state.anim).kind;
   document.querySelectorAll('#anim-tabs button').forEach(b => {
-    b.classList.toggle('in-use', isSequence() ? b.dataset.v === 'seq' : b.dataset.v === single);
+    b.classList.toggle('in-use', state.mode === 'keys' ? b.dataset.v === 'keys' : isSequence() ? b.dataset.v === 'seq' : b.dataset.v === single);
   });
 }
 
@@ -1026,6 +1046,7 @@ const isSequence = () => state.mode === 'sequence';
  * single animation (which keeps its seamless-loop behaviour over "Duración").
  */
 function currentTimeline() {
+  if (state.mode === 'keys') return keysTimeline(state.keys, state.seconds);
   return isSequence() ? sequenceTimeline(state) : null;
 }
 
@@ -1266,6 +1287,10 @@ function updateLoopNote() {
   const s = n => n.toFixed(1).replace('.', ',') + ' s';
   el.classList.remove('warn');
   const tl = currentTimeline();
+  if (tl?.kind === 'keys') {
+    el.textContent = `Keyframes: inicio → medio → final en ${s(tl.clip)}${tl.keys.loop ? ', y vuelta al inicio (bucle perfecto)' : ''}.`;
+    return;
+  }
   if (tl) {
     // Sequence: the length comes from its parts.
     const p = sequenceParts(state), parts = [];
@@ -1312,6 +1337,10 @@ function init() {
   fx.outline = (progress, opacity) => stage.fx.outline(progress, opacity);
   fx.portal = progress => stage.fx.portal(progress);
   fx.shine = (position, strength) => stage.fx.shine(position, strength);
+  fx.opacity = value => stage.fx.opacity(value);
+  fx.glow = value => stage.fx.glow(value);
+  fx.camera = value => stage.fx.camera(value);
+  fx.light = value => stage.fx.light(value);
   const commitMask = op => { requestRetrace(op); markDirty(); };
   maskEditor = initMaskEditor({ getSource: () => source, commit: commitMask });
   reliefUI = initRelief({
