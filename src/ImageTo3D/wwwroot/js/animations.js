@@ -52,6 +52,9 @@ const sink = (sy, h) => -(1 - sy) * h / 2;
 /** Staggered 0..1 progress for one piece: pieces start one after another by `rank`. */
 const stagger = (q, rank, spread = 0.45) => clamp01((q - rank * spread) / (1 - spread));
 
+/** Depth of the portal's ring (logo space): the logo shows only in front of it (intro-portal). */
+export const PORTAL_Z = -1.2;
+
 /** A piece's place in the stack of colour / SVG layers (0 = bottom … 1 = top). A logo with a
  *  single layer falls back to the height of the piece, so layer animations still move. */
 const layerRank = piece => (piece.parent?.userData.layerCount > 1 ? piece.userData.rankLayer : piece.userData.rankY) ?? 0;
@@ -327,6 +330,29 @@ export const ANIMATIONS = [
       m.rotation.y = Math.sin(TAU * p) * 0.55;
       m.rotation.x = -0.18 * k;
     } },
+  // ── Elastic deformation (the whole logo bends in the shader; effects.js) ──
+  { id: 'deform-wave', label: 'Ondulación', kind: 'loop', period: 2, still: 0.3,
+    apply: ({ p }) => deform('wave', 0.16, p) },
+  { id: 'deform-jelly', label: 'Gelatina elástica', kind: 'loop', period: 1.6, still: 0.2,
+    apply: ({ p }) => deform('jelly', 0.12, p) },
+  { id: 'deform-twist', label: 'Torsión', kind: 'loop', period: 3, still: 0.25,
+    apply: ({ p }) => deform('twist', 0.85, p) },
+  { id: 'deform-bend', label: 'Curvar', kind: 'loop', period: 3, still: 0.25,
+    apply: ({ m, p }) => { deform('bend', 0.55, p); m.rotation.y = Math.sin(TAU * p) * 0.2; } },
+  { id: 'glitch-slices', label: 'Glitch de franjas', kind: 'loop', period: 2.4, still: 0.1,
+    // Two short bursts per cycle in which horizontal bands of the logo jump sideways.
+    apply: ({ p }) => {
+      const on = (p > 0.05 && p < 0.17) || (p > 0.55 && p < 0.62);
+      if (on) deform('slices', 0.22, p);
+    } },
+  { id: 'shine-sweep', label: 'Barrido metálico', kind: 'loop', period: 3.5, still: 0.3,
+    // A bright band sweeps across while the logo tilts toward it (whatever the «Destello» option).
+    apply: ({ m, p }) => {
+      const t = clamp01((p - 0.1) / 0.5);
+      fx.shine(easeInOut(t), 2 * Math.sin(Math.PI * t) * fx.weight);
+      m.rotation.y = Math.sin(TAU * p) * 0.22;
+      m.rotation.x = Math.sin(TAU * p + 1) * 0.05;
+    } },
   { id: 'equalizer', label: 'Ecualizador', kind: 'loop', period: 2, pieces: true, still: 0.3,
     // Each piece jumps like a bar of a music visualiser, from its base, at its own whole-number rate.
     apply: ({ ps, p }) => ps.forEach(piece => {
@@ -598,6 +624,99 @@ export const ANIMATIONS = [
       piece.rotation.x = (1 - e) * -0.5;
       piece.scale.setScalar(Math.max(0.001, clamp01(s * 3)));
     }) },
+  { id: 'intro-trace', label: 'Trazar contorno', kind: 'intro', duration: 2.8, pieces: true,
+    // A glowing line draws every outline, then the logo fills in and grows its depth.
+    apply: ({ ps, q }) => {
+      if (q < 0.6) {
+        fx.outline(easeInOut(q / 0.6), 1);
+        ps.forEach(piece => { piece.visible = false; });
+        return;
+      }
+      const r = (q - 0.6) / 0.4;
+      fx.outline(1, 1 - r);
+      ps.forEach(piece => { piece.scale.z = Math.max(0.001, easeOutBack(r, 1.4)); });
+    } },
+  { id: 'intro-converge', label: 'Desde fuera', kind: 'intro', duration: 2.2, pieces: true,
+    // Each piece flies in from beyond the edge of the frame, in the direction it sits from the
+    // centre, spinning, the outer ones first.
+    apply: ({ ps, q }) => ps.forEach(piece => {
+      const u = piece.userData, h = u.home, len = Math.max(0.2, Math.hypot(h.x, h.y));
+      const k = 1 - easeOutCubic(stagger(q, 1 - u.rankR, 0.45));
+      piece.position.x += (h.x / len) * 9 * k;
+      piece.position.y += (h.y / len) * 9 * k;
+      piece.position.z += 2 * k;
+      piece.rotation.z = (u.rand - 0.5) * 2 * Math.PI * k;
+      piece.rotation.y = (u.rand2 - 0.5) * 2 * k;
+    }) },
+  { id: 'intro-burst', label: 'Desde el centro', kind: 'intro', duration: 1.8, pieces: true,
+    // The pieces start bunched at the centre and burst out to their places, overshooting a little.
+    apply: ({ ps, q }) => ps.forEach(piece => {
+      const u = piece.userData, s = stagger(q, u.rankR, 0.4), e = easeOutBack(s, 1.6);
+      piece.position.x -= u.home.x * (1 - e);
+      piece.position.y -= u.home.y * (1 - e);
+      piece.rotation.z = (1 - e) * (u.rand - 0.5) * 3;
+      piece.scale.setScalar(Math.max(0.001, Math.min(1, s * 2.5)));
+    }) },
+  { id: 'intro-physics', label: 'Caída con física', kind: 'intro', duration: 2.2, tall: true,
+    // Dropped from above under gravity, bouncing with real (shrinking) bounces, squashing on
+    // every landing and wobbling until it settles.
+    apply: ({ m, q, size }) => {
+      const H = 5, tf = 0.45, g = 2 * H / (tf * tf), restitution = 0.45;
+      let t = q * 2.2, y = 0, since = 1e9, impact = 0;
+      if (t < tf) y = H - g * t * t / 2;
+      else {
+        t -= tf;
+        let v = g * tf;
+        impact = 1;
+        for (;;) {
+          since = t;
+          v *= restitution;
+          const dur = 2 * v / g;
+          if (v < 0.4 || t < dur) { if (t < dur) y = v * t - g * t * t / 2; break; }
+          t -= dur;
+          impact = v / (g * tf);
+        }
+      }
+      const sq = since < 0.14 ? 0.3 * impact * Math.sin(Math.PI * since / 0.14) : 0;
+      m.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
+      m.position.y = y + sink(1 - sq, size.y);
+      m.rotation.z = 0.35 * Math.exp(-2.5 * q * 2.2) * Math.sin(q * 2.2 * 11) * (1 - q);
+    } },
+  { id: 'intro-glitch-slices', label: 'Glitch controlado', kind: 'intro', duration: 1.6, pieces: true,
+    // Appears in three glitch bursts of shrinking strength (bands jumping sideways, pieces
+    // flickering), and lands clean.
+    apply: ({ ps, q }) => {
+      if (q < 0.08) { ps.forEach(piece => { piece.visible = false; }); return; }
+      const bursts = [[0.08, 0.3], [0.42, 0.56], [0.7, 0.8]];
+      const b = bursts.findIndex(([a, z]) => q >= a && q < z);
+      if (b < 0) return;
+      deform('slices', 0.4 * (1 - b * 0.33) * (1 - q * 0.5), q * 3);
+      const f = Math.floor(q * 40);
+      ps.forEach((piece, i) => { if (hash(f * 13 + i * 7) > 0.85 - b * 0.15) piece.visible = false; });
+    } },
+  { id: 'intro-materialize', label: 'Reconstrucción', kind: 'intro', duration: 2.4,
+    // Particles gather from all around and the surface forms where they land.
+    apply: ({ q }) => fx.dissolve(1.4 - 1.45 * easeInOut(q), 'particles') },
+  { id: 'intro-smoke', label: 'Humo', kind: 'intro', duration: 2.6,
+    // The logo condenses out of a drifting cloud of smoke.
+    apply: ({ q }) => fx.dissolve(1.55 - 1.6 * easeInOut(q), 'smoke') },
+  { id: 'intro-portal', label: 'Portal', kind: 'intro', duration: 2.4,
+    // A glowing ring opens behind the logo's place and the logo comes through it.
+    apply: ({ m, q }) => {
+      fx.portal(q);
+      const e = easeInOut(clamp01((q - 0.12) / 0.7));
+      m.position.z = (1 - e) * -7;
+      m.rotation.y = (1 - e) * 0.5;
+      m.scale.setScalar(0.85 + 0.15 * e);
+      if (q < 0.95) fx.clip('z', PORTAL_Z, true);
+    } },
+  { id: 'intro-shine', label: 'Barrido de luz', kind: 'intro', duration: 2,
+    // Revealed from left to right by a band of light.
+    apply: ({ q, size, clip }) => {
+      const e = easeInOut(q);
+      fx.shine(e, 2.4 * Math.sin(Math.PI * q));
+      if (q < 1) { const half = size.x / 2 + 0.25; clip('x', -half + 2 * half * e); }
+    } },
   { id: 'intro-orbit', label: 'Órbita', kind: 'intro', duration: 2.4,
     // Spirals in from far away, circling round to land in front of the camera.
     apply: ({ m, q }) => {
@@ -699,6 +818,10 @@ const REVERSED_INTROS = [
   ['intro-fan', 'outro-fan', 'Cerrar abanico'],
   ['intro-boomerang', 'outro-boomerang', 'Bumerán fuera'],
   ['intro-layers', 'outro-layers', 'Capas fuera'],
+  ['intro-trace', 'outro-trace', 'Borrar contorno'],
+  ['intro-portal', 'outro-portal', 'Portal fuera'],
+  ['intro-converge', 'outro-converge', 'Hacia fuera'],
+  ['intro-burst', 'outro-burst', 'Al centro'],
 ];
 for (const [from, id, label] of REVERSED_INTROS) {
   const src = ANIMATIONS.find(a => a.id === from);
@@ -775,6 +898,12 @@ ANIMATIONS.push(
         piece.rotation.x = easeInOut(clamp01((s - 0.15) / 0.6)) * Math.PI;
       });
     } },
+  { id: 'outro-dissolve', label: 'Disolver en partículas', kind: 'outro', duration: 2.2,
+    // Burns away from one side, every bit of surface turning into a glowing particle.
+    apply: ({ q }) => fx.dissolve(-0.05 + 1.45 * q, 'particles') },
+  { id: 'outro-smoke', label: 'Esfumarse', kind: 'outro', duration: 2.6,
+    // Turns into smoke that rises and thins out.
+    apply: ({ q }) => fx.dissolve(-0.05 + 1.6 * q, 'smoke') },
   { id: 'outro-bubbles', label: 'Pompas', kind: 'outro', duration: 1.8, pieces: true,
     // Each piece swells like a soap bubble, floats up a little and pops, at its own moment.
     apply: ({ ps, q }) => ps.forEach(piece => {
@@ -799,10 +928,23 @@ export function getAnimation(id) {
  * logo whose 'x' or 'y' coordinate (logo units, centred on the logo) is ≤ value, or ≥ value
  * with keepAbove; clip(null) clears it. Installed by the app; a no-op otherwise.
  */
-export const fx = { clip: () => {} };
+export const fx = {
+  clip: () => {},
+  // effects.js (installed by the app): see that module for what each does.
+  deform: () => {}, dissolve: () => {}, outline: () => {}, portal: () => {}, shine: () => {},
+  /** How much of an effect a loop shows: 1, except where a sequence eases into / out of it. */
+  weight: 1,
+};
+/** Effects scaled by fx.weight, so a sequence's joins fade them like they fade the motion. */
+const deform = (type, amount, phase) => fx.deform(type, amount * fx.weight, phase);
 
 export function resetPose(motion, pieces) {
   fx.clip(null);
+  fx.deform(null);
+  fx.dissolve(null);
+  fx.outline(null);
+  fx.portal(null);
+  fx.shine(null);
   motion.position.set(0, 0, 0);
   motion.rotation.set(0, 0, 0);
   motion.scale.set(1, 1, 1);
@@ -898,10 +1040,12 @@ export function timelineOf({ intro = null, loop = null, outro = null, clip, spee
         // start at rest (a float already tilted, a wave mid-swell).
         const T = Math.max(0, Math.min(transition, mid / 2)), local = t - introSecs;
         const inT = intro ? T : 0, outT = outro ? T : 0;
-        poseAt(loop, easedLoopTime(local, mid, inT, outT) * fit.speed, motion, pieces, true);
         let w = 1;
         if (inT > 0) w = Math.min(w, smoothstep01(local / inT));
         if (outT > 0) w = Math.min(w, smoothstep01((mid - local) / outT));
+        fx.weight = w;
+        poseAt(loop, easedLoopTime(local, mid, inT, outT) * fit.speed, motion, pieces, true);
+        fx.weight = 1;
         if (w < 1) towardRest(w, motion, pieces);
         return;
       }

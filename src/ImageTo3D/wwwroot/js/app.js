@@ -1307,6 +1307,11 @@ function initDragDrop() {
 function init() {
   initSliders();
   fx.clip = (axis, value, keepAbove) => stage.setLogoClip(axis, value, keepAbove);
+  fx.deform = (type, amount, phase) => stage.fx.deform(type, amount, phase);
+  fx.dissolve = (amount, style) => stage.fx.dissolve(amount, style);
+  fx.outline = (progress, opacity) => stage.fx.outline(progress, opacity);
+  fx.portal = progress => stage.fx.portal(progress);
+  fx.shine = (position, strength) => stage.fx.shine(position, strength);
   const commitMask = op => { requestRetrace(op); markDirty(); };
   maskEditor = initMaskEditor({ getSource: () => source, commit: commitMask });
   reliefUI = initRelief({

@@ -94,6 +94,7 @@ export function buildLogoGroup(shapeSet, opts) {
     geo = toCreasedNormals(geo, THREE.MathUtils.degToRad(35));
     flattenCaps(geo);
     geo.computeBoundingBox();
+    const frontZ = geo.boundingBox.max.z;   // the flat face (before any relief on top)
     if (opts.relief && opts.relief.mode !== 'none') {
       // The faces sit at the extremes in z (the bevel stays between them).
       const relief = buildRelief(shape, { ...opts.relief, cell: RELIEF_CELL, uvOf, frontZ: geo.boundingBox.max.z, backZ: geo.boundingBox.min.z });
@@ -113,6 +114,10 @@ export function buildLogoGroup(shapeSet, opts) {
     mesh.userData.extent = geo.boundingBox.getSize(new THREE.Vector3());   // to scale a piece from its base
     mesh.userData.index = i;
     mesh.userData.layer = layer;
+    mesh.userData.frontZ = frontZ;
+    // The outline in the piece's own coordinates (effects.js draws it as a glowing ribbon).
+    const pts = shape.extractPoints(1);
+    mesh.userData.outline = [pts.shape, ...pts.holes].map(loop => Float32Array.from(loop.flatMap(v => [v.x - center.x, v.y - center.y])));
     group.add(mesh);
   });
 

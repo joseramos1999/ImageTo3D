@@ -7,6 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
+import { Effects } from './effects.js';
 
 const TAU = Math.PI * 2;
 
@@ -40,6 +41,10 @@ export const CAMERA_MOVES = [
   { id: 'low-arc', label: 'Contrapicado' },
   { id: 'top-down', label: 'Cenital' },
   { id: 'push-arc', label: 'Arco y acercar' },
+  // Product shots
+  { id: 'macro', label: 'Macro' },
+  { id: 'orbit-arc', label: 'Órbita parcial' },
+  { id: 'parallax', label: 'Paralaje' },
 ];
 
 export const BACKGROUNDS = [
@@ -196,6 +201,7 @@ export class Stage {
     this.bgSpec = BACKGROUNDS[0].spec;
     this.shineUniforms = { uShinePos: { value: 0 }, uShineWidth: { value: 0.35 }, uShineStrength: { value: 0 } };
     this.particles = null;
+    this.fx = new Effects(this);
     this.setLighting('studio', 1);
     this.setBackground(this.bgSpec);
   }
@@ -251,6 +257,7 @@ export class Stage {
 
   setLogo(group) {
     if (this.logo) this.motion.remove(this.logo);
+    this.fx.reset();
     this.logo = group;
     if (group) {
       this.motion.add(group);
@@ -267,7 +274,7 @@ export class Stage {
     if (axis) {
       this.clipPlane ||= new THREE.Plane();
       const s = this.root.scale.x, sign = keepAbove ? 1 : -1;
-      const n = new THREE.Vector3(axis === 'x' ? sign : 0, axis === 'y' ? sign : 0, 0);
+      const n = new THREE.Vector3(axis === 'x' ? sign : 0, axis === 'y' ? sign : 0, axis === 'z' ? sign : 0);
       this.clipPlane.set(n, -sign * value * s);
       planes = [this.clipPlane];
     }
@@ -482,9 +489,17 @@ export class Stage {
 
   updateShine(cycle) {
     const u = this.shineUniforms;
-    if (!this.shineOn) { u.uShineStrength.value = 0; return; }
     const s = this.root.scale.x;
     const half = (Math.abs(this.logoSize.x) + Math.abs(this.logoSize.y) * 0.35) * s * 0.5 + 0.8;
+    // An animation driving the band (a light sweep) wins over the «Destello» option.
+    const o = this.fx.shineOverride;
+    if (o) {
+      u.uShinePos.value = -half + 2 * half * o.position;
+      u.uShineWidth.value = 0.35 * s;
+      u.uShineStrength.value = o.strength;
+      return;
+    }
+    if (!this.shineOn) { u.uShineStrength.value = 0; return; }
     const q = Math.min(1, cycle / 0.45);   // sweep during the first 45 % of the cycle, then rest
     u.uShinePos.value = -half + 2 * half * (q * q * (3 - 2 * q));
     u.uShineWidth.value = 0.35 * s;
@@ -495,6 +510,7 @@ export class Stage {
   decorateMaterial(material) {
     const uniforms = this.shineUniforms;
     material.onBeforeCompile = shader => {
+      this.fx.inject(shader);
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vShineWorld;')
@@ -560,6 +576,7 @@ export class Stage {
    * The camera move is applied on top of the user's orbit and undone afterwards.
    */
   render(cycle = 0, { transparent = false } = {}) {
+    this.fx.update();
     this.updateParticles(cycle);
     this.updateShine(cycle);
     const cam = this.camera, target = this.controls.target;
@@ -652,6 +669,34 @@ export class Stage {
         sph.theta += Math.sin(w) * 0.6 * k;
         sph.radius *= 1 - 0.25 * k * ease;
         break;
+      case 'macro': {
+        // Close in on the surface and glide along it, slightly from the side, then pull back.
+        const near = ease * Math.min(1, k);
+        sph.radius *= 1 - 0.62 * near;
+        sph.theta += 0.35 * near;
+        const right = new THREE.Vector3().setFromSphericalCoords(1, Math.PI / 2, sph.theta + Math.PI / 2);
+        const glide = Math.sin(w) * this.logoSize.x * this.root.scale.x * 0.3 * k;
+        target.addScaledVector(right, glide);
+        look.addScaledVector(right, glide);
+        break;
+      }
+      case 'orbit-arc': {
+        // A quarter orbit from one side to the other and back, easing at both ends.
+        sph.theta += (ease - 0.5) * 1.4 * k;
+        sph.phi = clampPhi(sph.phi - 0.12 * k * Math.sin(w));
+        break;
+      }
+      case 'parallax': {
+        // The camera slides while aiming at a point behind the logo, so nearer things (layers
+        // in relief, the floor, particles) slide past farther ones.
+        const right = new THREE.Vector3().setFromSphericalCoords(1, Math.PI / 2, sph.theta + Math.PI / 2);
+        const shift = Math.sin(w) * sph.radius * 0.11 * k;
+        target.addScaledVector(right, shift);
+        const back = target.clone().sub(cam.position).normalize();
+        look.addScaledVector(back, sph.radius * 0.9).addScaledVector(right, shift * 0.15);
+        sph.phi = clampPhi(sph.phi - 0.05 * k * Math.cos(w));
+        break;
+      }
     }
     cam.position.copy(target).add(new THREE.Vector3().setFromSpherical(sph));
     cam.lookAt(look);

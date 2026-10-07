@@ -18,8 +18,8 @@ Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la �
 - **Capas:** con «Separar por colores» (o en un SVG, sus colores) cada color del logo es una capa: icono, texto, borde… Cada capa tiene su grosor (sale hacia delante), su material y se puede ocultar, y hay animaciones que las usan («Por capas», «Capas fuera», «Despiece»).
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, quitar motas, rellenar huecos pequeños, unir fragmentos, inversión, relleno de agujeros y una vista previa antes / comparar / después. «Editar a mano…» abre un editor grande con pincel para borrar, recuperar (lo que el recorte tomó por fondo) o suavizar bordes, y clic para quitar una pieza o rellenar un hueco; las ediciones se guardan con el proyecto y se deshacen con Ctrl+Z.
 - **Geometría:** profundidad, bisel, suavizado y escala, y **relieve**: «Inflar» (abombado desde el borde, como un sticker) o «Pintado» con un editor de pincel (subir, bajar, suavizar, aplanar) y degradados lineal y radial, con vista 3D al lado; altura, borde y opción de relieve en las dos caras (medallas).
-- **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
-- **Animación:** 140 animaciones (58 bucles, 42 intros y 40 salidas; algunas revelan el logo con planos de recorte) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 21 estilos **Predeterminados** que aplican la escena completa con un clic.
+- **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 15 movimientos de cámara con intensidad regulable (incluidos los de producto: macro, órbita parcial y paralaje).
+- **Animación:** 161 animaciones (64 bucles, 51 intros y 46 salidas; algunas revelan el logo con planos de recorte y otras usan efectos: trazado del contorno con líneas de luz, deformación elástica real —ondas, gelatina, torsión, curvatura, glitch de franjas—, disolución en partículas o humo y su reconstrucción, portal y barrido de luz metálica) que se encadenan en la pestaña **Secuencia** (intro → bucle × N repeticiones → salida, con uniones suaves; la duración sale de las partes); y 21 estilos **Predeterminados** que aplican la escena completa con un clic.
 - **Proyectos:** archivos `.i3d` con la imagen incrustada, menú de recientes, recuperación automática al reiniciar y deshacer / rehacer.
 - **Exportación:** MP4, WebM (con canal alfa si el fondo es transparente), AVI en Motion JPEG (el más compatible) o sin compresión con canal alfa (como el códec «Ninguno» con «RGB + alfa» de After Effects) y secuencia PNG en ZIP, hasta 4K60, escritos a disco mientras se renderizan y con bucle perfecto; PNG, GLB y STL en milímetros. Tamaños predefinidos (YouTube, Shorts/Reels/TikTok, Instagram 1:1 y 4:5, 4:3, 21:9…) o personalizado.
 
@@ -41,7 +41,8 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/relief-ui.js       controles de relieve y editor «Pintar relieve»
          ├─ js/geometry.js        contornos → ExtrudeGeometry con bisel y UV planares (hilo principal)
          ├─ js/materials.js       24 materiales
-         ├─ js/animations.js      140 animaciones, funciones puras del tiempo
+         ├─ js/animations.js      161 animaciones, funciones puras del tiempo
+         ├─ js/effects.js         efectos que usan las animaciones: deformación (shader), disolución, contorno, portal, barrido
          ├─ js/presets.js         21 estilos predeterminados
          ├─ js/sequence-ui.js     pestaña Secuencia: intro, bucle × N y salida
          ├─ js/stage.js           render, luces, suelos, fondos, bloom, partículas, cámara
