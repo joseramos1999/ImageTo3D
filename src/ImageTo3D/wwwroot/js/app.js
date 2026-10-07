@@ -18,6 +18,7 @@ import { openSink } from './filesink.js';
 import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
+import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
 
 const $ = sel => document.querySelector(sel);
 
@@ -45,7 +46,7 @@ const save = () => {
 // ───────── engine ─────────
 const canvas = $('#canvas');
 const stage = new Stage(canvas);
-let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, outlines, shapeSet, before, after }
+let source = null;     // { name, blob, thumbUrl, mask, meta, key, colorTex, outlines, shapeSet, before, after, vector, vectorNote }
 let logo = null;       // THREE.Group of piece meshes
 let materials = [];
 let exporting = false, cancelExport = false;
@@ -73,12 +74,17 @@ async function loadSource(bitmap, { name, blob, thumbUrl = null, mask = DEFAULT_
   const t0 = performance.now();
   try {
     const before = await previewBitmap(bitmap);
+    // An SVG is also read as vectors; the raster still goes to the worker, so "trace it as
+    // an image" stays one switch away.
+    const vecJob = blob?.type === 'image/svg+xml' ? buildVector(blob) : null;
     const r = await pipeline.load(bitmap, mask, state.smooth);
+    const vec = await vecJob;
     if (job !== pipeJob) { r.color?.close(); r.after?.close(); before.close(); return false; }
     disposeSource();
     // The worker now holds this image, so it becomes the source even when nothing was
     // found: the mask controls are how the user fixes that.
-    source = { name, blob, thumbUrl, mask: { ...DEFAULT_MASK, ...mask }, before };
+    source = { name, blob, thumbUrl, mask: { ...DEFAULT_MASK, ...mask }, before,
+      vector: vec?.parsed ? vec : null, vectorNote: vec?.note || null };
     applyAnalysis(r);
     rebuildMeshes();
     frameCamera();
@@ -95,6 +101,24 @@ async function loadSource(bitmap, { name, blob, thumbUrl = null, mask = DEFAULT_
     if (job === pipeJob) setBusy(false);
   }
 }
+
+/** The SVG's own paths, layers and colour texture, or { note } saying why they can't be used. */
+async function buildVector(blob) {
+  try {
+    const parsed = parseVectorSvg(await blob.text());
+    const verdict = vectorVerdict(parsed);
+    if (!verdict.ok) return { note: verdict.reason };
+    const L = vectorLayout(parsed);
+    const tex = await vectorTexture(parsed, L);
+    return { parsed, L, color: tex.color, layers: tex.layers };
+  } catch (e) {
+    console.warn('SVG vector import failed:', e);
+    return { note: 'no se pudo leer como vector' };
+  }
+}
+
+/** True while the current source is built from SVG paths rather than traced. */
+const usingVector = () => !!(source?.vector && source.mask.vector !== false);
 
 /** Re-runs the pipeline for the current image: 'mask' redoes everything, 'outlines' only
  *  the smoothing / denoise / holes step. */
@@ -138,7 +162,27 @@ function applyAnalysis(r) {
   source.after?.close();
   source.after = r.after;
   source.outlines = r.outlines;
-  source.shapeSet = shapesFromOutlines(r.outlines, source.meta);
+  if (usingVector()) applyVector();
+  source.shapeSet = shapesFromOutlines(source.outlines, source.meta);
+}
+
+/** Swaps the traced result for the SVG's own: outlines, colour texture and preview. */
+function applyVector() {
+  const v = source.vector;
+  if (source.colorTex?.image !== v.color) {
+    source.colorTex?.image?.close?.();
+    source.colorTex?.dispose();
+    const tex = new THREE.Texture(v.color);
+    tex.flipY = false;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = stage.renderer.capabilities.getMaxAnisotropy();
+    tex.needsUpdate = true;
+    source.colorTex = tex;
+  }
+  source.meta = { w: v.L.w, h: v.L.h, W: v.L.w + 2, H: v.L.h + 2 };
+  source.outlines = vectorOutlines(v.parsed, v.L, state.smooth);
+  source.after?.close();
+  source.after = vectorPreview(v.color, source.outlines, v.L);
 }
 
 function disposeSource() {
@@ -240,6 +284,13 @@ async function openFile(file) {
   const ok = await loadSource(bitmap, { name: file.name, blob: file, thumbUrl: URL.createObjectURL(file) });
   if (!ok) return;
   startProject();
+  if (usingVector()) {
+    const layers = new Set(source.outlines.map(o => o.layer)).size;
+    toast(`«${file.name}» importado como vector: ${source.outlines.length} formas en ${layers} capa${layers > 1 ? 's' : ''}` +
+      (source.vector.parsed.report.strokes ? '. Los trazos (stroke) del SVG no se convierten: pásalos a relleno o usa «Trazar como imagen» en Recorte.' : ''));
+    return;
+  }
+  if (source.vectorNote) { toast(`«${file.name}»: ${source.vectorNote}, así que se traza como imagen.`); return; }
   const reduced = Math.max(width, height) > LIMITS.workSide;
   toast(reduced
     ? `«${file.name}» (${width}×${height}) reducido a ${LIMITS.workSide} px para trabajar y convertido a 3D`
@@ -279,7 +330,8 @@ function updateHud(ms) {
   if (!logo) return;
   let tris = 0;
   logo.children.forEach(m => { tris += m.geometry.attributes.position.count / 3; });
-  const parts = [`${source.name} · `, ['b', String(logo.children.length)], ' piezas · ', ['b', `${Math.round(tris / 1000)}k`], ' triángulos'];
+  const parts = [`${source.name} · `, ...(usingVector() ? [['b', 'vectorial'], ' · '] : []),
+    ['b', String(logo.children.length)], ' piezas · ', ['b', `${Math.round(tris / 1000)}k`], ' triángulos'];
   if (ms != null) parts.push(' · ', ['b', String(Math.round(ms))], ' ms');
   setParts($('#hud'), parts);
 }
@@ -1173,7 +1225,7 @@ function initDragDrop() {
 function init() {
   initSliders();
   fx.clip = (axis, value, keepAbove) => stage.setLogoClip(axis, value, keepAbove);
-  maskUI = initMaskUI({ getSource: () => source, commit: op => { requestRetrace(op); markDirty(); } });
+  maskUI = initMaskUI({ getSource: () => source, isVector: usingVector, commit: op => { requestRetrace(op); markDirty(); } });
   initMaterials();
   initAnimations();
   initBackgrounds();

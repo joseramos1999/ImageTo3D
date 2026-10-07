@@ -14,6 +14,7 @@ Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la �
 
 ## Qué hace
 
+- **SVG vectorial:** los SVG se construyen desde sus propios trazados: curvas exactas, agujeros según su fill-rule, todos sus colores (también degradados) y el orden de pintado, con cada color en su capa. Si el SVG tiene textos sin convertir o imágenes incrustadas, se traza como imagen; también se puede elegir así en «Recorte».
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, limpieza de ruido, inversión, relleno de agujeros y una vista previa antes / comparar / después.
 - **Geometría:** profundidad, bisel, suavizado y escala.
 - **Aspecto:** 24 materiales, 6 iluminaciones con dirección de la luz arrastrable, 5 suelos, 13 fondos (incluido Transparente), bloom con tamaño del halo, destello que barre el logo, partículas y 12 movimientos de cámara con intensidad regulable.
@@ -31,6 +32,7 @@ ImageTo3D.exe (WPF, .NET 10)
          ├─ js/pipeline*.js       Web Worker: trazado, textura de color y vista previa del recorte
          │   ├─ js/trace.js       llave de recorte → campo de "tinta" → marching squares interpolado → contornos
          │   └─ js/colormap.js    textura de color sin halos (erosión + dilatación + push-pull)
+         ├─ js/vector.js          SVG real: trazados de SVGLoader → contornos por capas y textura de color
          ├─ js/geometry.js        contornos → ExtrudeGeometry con bisel y UV planares (hilo principal)
          ├─ js/materials.js       24 materiales
          ├─ js/animations.js      137 animaciones, funciones puras del tiempo

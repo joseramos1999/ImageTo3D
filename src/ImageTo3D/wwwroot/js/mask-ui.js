@@ -23,7 +23,7 @@ const hex = (r, g, b) => '#' + [r, g, b].map(v => Math.round(v).toString(16).pad
  * ui = initMaskUI({ getSource, commit }) where commit(op) applies source.mask:
  * op 'mask' redoes the analysis, 'outlines' only the denoise / holes step.
  */
-export function initMaskUI({ getSource, commit }) {
+export function initMaskUI({ getSource, commit, isVector = () => false }) {
   const canvas = $('#mask-canvas');
   const ctx = canvas.getContext('2d');
   let view = 'split', split = 0.5, picking = false, beforePixels = null;
@@ -69,7 +69,8 @@ export function initMaskUI({ getSource, commit }) {
   $('#mask-invert').addEventListener('change', e => set({ invert: e.target.checked }, 'mask'));
   $('#mask-fill').addEventListener('change', e => set({ fillHoles: e.target.checked }, 'outlines'));
   $('#mask-color').addEventListener('change', e => set({ mode: 'color', color: e.target.value }, 'mask'));
-  $('#mask-reset').onclick = () => set({ ...DEFAULT_MASK }, 'mask');
+  $('#mask-reset').onclick = () => set({ ...DEFAULT_MASK, vector: mask()?.vector ?? true }, 'mask');
+  $('#mask-vector').addEventListener('change', e => set({ vector: e.target.checked }, 'mask'));
 
   // ── preview view mode ──
   const viewSeg = $('#mask-view-mode');
@@ -145,6 +146,23 @@ export function initMaskUI({ getSource, commit }) {
     $('#mask-invert').checked = !!m.invert;
     $('#mask-fill').checked = !!m.fillHoles;
     $('#mask-color').value = m.color;
+
+    // SVG: built from its own paths (nothing to cut out), or traced like any image.
+    const vectorOn = isVector();
+    $('#mask-vector-box').hidden = !src?.vector && !src?.vectorNote;
+    $('#mask-vector').checked = vectorOn;
+    $('#mask-vector').disabled = !src?.vector;
+    $('#mask-raster').hidden = vectorOn;
+    $('#mask-pick').hidden = vectorOn;
+    if (src?.vector || src?.vectorNote) {
+      const r = src.vector?.parsed.report;
+      $('#mask-vector-info').textContent = !src.vector
+        ? `No se puede usar como vector: ${src.vectorNote}. Se traza como imagen.`
+        : vectorOn
+          ? `Formas y colores exactos del SVG${r.background ? ' (sin su rectángulo de fondo)' : ''}. El «Suavizado» de Geometría ajusta la precisión de las curvas.` +
+            (r.strokes ? ' Los trazos (stroke) no se convierten: pásalos a relleno en tu editor.' : '')
+          : 'Se traza la imagen del SVG como si fuera un PNG.';
+    }
 
     const info = $('#mask-info');
     const key = src?.key;

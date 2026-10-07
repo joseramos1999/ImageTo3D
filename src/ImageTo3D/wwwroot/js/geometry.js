@@ -8,7 +8,7 @@ export const LOGO_SIZE = 4;   // world units across the longest side of the logo
 /** Outlines in field coordinates → normalised THREE.Shapes plus the mapping back
  *  to texture space. Y is flipped (image rows run down, world Y runs up). */
 export function shapesFromOutlines(outlines, trace) {
-  if (!outlines.length) return { shapes: [], uvOf: () => new THREE.Vector2(), width: 0, height: 0 };
+  if (!outlines.length) return { shapes: [], layers: [], uvOf: () => new THREE.Vector2(), width: 0, height: 0 };
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const o of outlines) for (const p of o.outer) {
     if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
@@ -36,7 +36,9 @@ export function shapesFromOutlines(outlines, trace) {
     }
     return shape;
   });
-  return { shapes, uvOf, width: (maxX - minX) * k, height: (maxY - minY) * k };
+  // Layer of each shape (SVG paint order / colour regions); a plain trace is all layer 0.
+  const layers = outlines.map(o => o.layer ?? 0);
+  return { shapes, layers, uvOf, width: (maxX - minX) * k, height: (maxY - minY) * k };
 }
 
 /** Planar UVs everywhere: the caps show the artwork, and the side walls carry the
@@ -56,13 +58,19 @@ function planarUV(uvOf) {
  */
 export function buildLogoGroup(shapeSet, opts) {
   const { shapes, uvOf } = shapeSet;
+  // Overlapping layers (a word painted over a badge) would share their front plane and
+  // flicker: each layer is extruded a hair deeper than the one under it, so it sits in front.
+  const layerOf = i => shapeSet.layers?.[i] ?? 0;
+  const top = Math.max(0, ...(shapeSet.layers || [0]));
+  const step = top ? Math.min(0.006, 0.05 / top) : 0;
   const group = new THREE.Group();
   const bevel = Math.max(0, opts.bevel);
   const uvGen = planarUV(uvOf);
 
   shapes.forEach((shape, i) => {
+    const depth = opts.depth + layerOf(i) * step;
     let geo = new THREE.ExtrudeGeometry(shape, {
-      depth: opts.depth,
+      depth,
       curveSegments: 2,
       steps: 1,
       bevelEnabled: bevel > 1e-4,
@@ -71,7 +79,7 @@ export function buildLogoGroup(shapeSet, opts) {
       bevelSegments: Math.max(1, Math.min(6, 1 + opts.smoothness)),
       UVGenerator: uvGen,
     });
-    geo.translate(0, 0, -opts.depth / 2);
+    geo.translate(0, 0, -depth / 2);
     // Smooth shading across the bevel and curved walls, hard crease at real corners.
     geo = toCreasedNormals(geo, THREE.MathUtils.degToRad(35));
     flattenCaps(geo);
@@ -89,6 +97,7 @@ export function buildLogoGroup(shapeSet, opts) {
     mesh.userData.home = center.clone();
     mesh.userData.extent = geo.boundingBox.getSize(new THREE.Vector3());   // to scale a piece from its base
     mesh.userData.index = i;
+    mesh.userData.layer = layerOf(i);
     group.add(mesh);
   });
 

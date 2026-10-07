@@ -74,6 +74,11 @@
           </div>
           <button class="btn small" id="mask-pick" title="Elige el color del fondo haciendo clic en la vista previa">Cuentagotas</button>
         </div>
+        <div id="mask-vector-box" hidden>
+          <div class="row"><label>Usar los trazados del SVG</label><label class="switch"><input type="checkbox" id="mask-vector" aria-label="Usar los trazados del SVG"><span></span></label></div>
+          <p class="note" id="mask-vector-info"></p>
+        </div>
+        <div id="mask-raster">
         <label class="sub">Qué es fondo</label>
         <div class="chips" id="mask-mode" role="group" aria-label="Qué es fondo"></div>
         <p class="note" id="mask-info"></p>
@@ -83,6 +88,7 @@
         <div class="row"><label>Invertir</label><label class="switch"><input type="checkbox" id="mask-invert" aria-label="Invertir"><span></span></label></div>
         <div class="row"><label>Rellenar agujeros</label><label class="switch"><input type="checkbox" id="mask-fill" aria-label="Rellenar agujeros"><span></span></label></div>
         <button class="btn small mask-reset" id="mask-reset">Restablecer recorte</button>
+        </div>
       </section>
 
       <section class="sec">

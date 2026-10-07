@@ -36,6 +36,65 @@ export function buildColorImage(img, key, maxDim = 2048) {
   return canvas;
 }
 
+/**
+ * Fills every pixel that is not fully opaque and makes the image opaque (the SVG colour
+ * texture): up to `reach` pixels out, each takes the colour of the nearest shape, grown
+ * wave by wave from the edge only (cheap on a 2048 px texture); farther out, the pyramid
+ * fill. The bevel and side walls sample just outside the shapes, so they get the colour of
+ * their own shape, never a neighbour's or black.
+ */
+export function fillTransparent(imgData, reach = 48) {
+  const { data: d, width: w, height: h } = imgData;
+  let solid = new Uint8Array(w * h);
+  for (let p = 0; p < w * h; p++) solid[p] = d[p * 4 + 3] >= 250 ? 1 : 0;
+  // Frontier: empty pixels touching a solid one.
+  let front = [];
+  const touches = p => {
+    const x = p % w, y = (p - x) / w;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if ((dx || dy) && xx >= 0 && xx < w && yy >= 0 && yy < h && solid[yy * w + xx]) return true;
+    }
+    return false;
+  };
+  for (let p = 0; p < w * h; p++) if (!solid[p] && touches(p)) front.push(p);
+  for (let pass = 0; pass < reach && front.length; pass++) {
+    const grown = [];
+    for (const p of front) {
+      if (solid[p] === 1) continue;
+      const x = p % w, y = (p - x) / w;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+        const q = yy * w + xx;
+        if (solid[q] !== 1) continue;
+        r += d[q * 4]; g += d[q * 4 + 1]; b += d[q * 4 + 2]; n++;
+      }
+      if (!n) continue;
+      d[p * 4] = r / n; d[p * 4 + 1] = g / n; d[p * 4 + 2] = b / n;
+      grown.push(p);
+    }
+    // Commit the wave at once (2 = filled this pass), so it reads only the previous ring.
+    for (const p of grown) solid[p] = 2;
+    const next = [];
+    for (const p of grown) {
+      solid[p] = 1;
+      const x = p % w, y = (p - x) / w;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+        const q = yy * w + xx;
+        if (!solid[q]) { solid[q] = 3; next.push(q); }   // 3: queued, still empty
+      }
+    }
+    for (const q of next) solid[q] = 0;
+    front = next;
+  }
+  for (let p = 0; p < w * h; p++) solid[p] = solid[p] === 1 ? 1 : 0;
+  pushPull(d, solid, w, h);
+}
+
 /** 3×3 binary erosion. If a pass would wipe out most of the artwork (hairline
  *  line-art), the previous mask is kept instead. */
 function erode(src, w, h) {
