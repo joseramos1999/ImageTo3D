@@ -595,12 +595,22 @@ export class Stage {
     u.uShineStrength.value = 1.6 * this.shineGain * Math.sin(Math.PI * q);
   }
 
-  /** Adds the shine band to a logo material (uniforms shared, so no recompiles per frame). */
+  /** Adds the shine band to a logo material (uniforms shared, so no recompiles per frame), and
+   *  the side walls' gradient when the material asks for one (userData.gradTo, materials.js). */
   decorateMaterial(material) {
-    const uniforms = this.shineUniforms;
+    const uniforms = this.shineUniforms, gradTo = material.userData.gradTo;
     material.onBeforeCompile = shader => {
       this.fx.inject(shader);
       Object.assign(shader.uniforms, uniforms);
+      if (gradTo) {
+        shader.uniforms.uGradTo = { value: gradTo };
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nattribute float aDepthT;\nvarying float vDepthT;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDepthT = aDepthT;');
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\nuniform vec3 uGradTo;\nvarying float vDepthT;')
+          .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uGradTo, smoothstep(0.0, 1.0, vDepthT));');
+      }
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vShineWorld;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvShineWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
@@ -610,7 +620,7 @@ export class Stage {
           'float shineBand = 1.0 - smoothstep(0.0, uShineWidth, abs(dot(vShineWorld.xy, normalize(vec2(1.0, 0.35))) - uShinePos));\n' +
           'outgoingLight += vec3(shineBand * shineBand * uShineStrength);\n#include <opaque_fragment>');
     };
-    material.customProgramCacheKey = () => 'shine';
+    material.customProgramCacheKey = () => (gradTo ? 'shine|grad' : 'shine');
     material.needsUpdate = true;
   }
 

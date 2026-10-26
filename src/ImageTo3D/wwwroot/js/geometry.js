@@ -96,6 +96,7 @@ export function buildLogoGroup(shapeSet, opts) {
     geo.computeBoundingBox();
     // The flat faces (before any relief): the extremes in z, the bevel stays between them.
     const frontZ = geo.boundingBox.max.z, backZ = geo.boundingBox.min.z;
+    if (bevel > 1e-4) splitBevel(geo, frontZ - bevel * 0.8, backZ + bevel * 0.8);
     let reliefGroup = null;
     if (opts.relief && opts.relief.mode !== 'none') {
       const relief = buildRelief(shape, { ...opts.relief, cell: RELIEF_CELL, uvOf, frontZ, backZ });
@@ -105,6 +106,7 @@ export function buildLogoGroup(shapeSet, opts) {
         geo.computeBoundingBox();
       }
     }
+    depthAttribute(geo, frontZ, backZ);
     const center = new THREE.Vector3();
     geo.boundingBox.getCenter(center);
     center.z = 0;
@@ -146,6 +148,43 @@ export function buildLogoGroup(shapeSet, opts) {
   group.userData.layerCount = top + 1;
   group.userData.size = size;
   return group;
+}
+
+/**
+ * ExtrudeGeometry puts the side walls and the bevel in one group (1). The bevel's triangles —
+ * those reaching past the walls' depth, toward a cap — move to a group of their own (2), so the
+ * bevel can take its own material (a gold or neon edge). The geometry has no index by now, so
+ * this only reorders triangles.
+ */
+function splitBevel(geo, wallFront, wallBack) {
+  const side = geo.groups.find(g => g.materialIndex === 1);
+  if (!side) return;
+  const pos = geo.attributes.position, eps = 1e-5;
+  const walls = [], bevel = [];
+  for (let i = side.start; i < side.start + side.count; i += 3) {
+    let out = false;
+    for (let k = 0; k < 3; k++) { const z = pos.getZ(i + k); if (z > wallFront + eps || z < wallBack - eps) out = true; }
+    (out ? bevel : walls).push(i);
+  }
+  if (!bevel.length) return;
+  for (const [name, attr] of Object.entries(geo.attributes)) {
+    const n = attr.itemSize, src = attr.array, dst = src.slice();
+    let o = side.start * n;
+    for (const list of [walls, bevel]) for (const i of list) { dst.set(src.subarray(i * n, (i + 3) * n), o); o += 3 * n; }
+    geo.setAttribute(name, new THREE.BufferAttribute(dst, n, attr.normalized));
+  }
+  const others = geo.groups.filter(g => g !== side);
+  geo.clearGroups();
+  others.forEach(g => geo.addGroup(g.start, g.count, g.materialIndex));
+  geo.addGroup(side.start, walls.length * 3, 1);
+  geo.addGroup(side.start + walls.length * 3, bevel.length * 3, 2);
+}
+
+/** aDepthT: 0 at the front face … 1 at the back, for the side walls' colour gradient. */
+function depthAttribute(geo, frontZ, backZ) {
+  const pos = geo.attributes.position, t = new Float32Array(pos.count), span = Math.max(1e-6, frontZ - backZ);
+  for (let i = 0; i < pos.count; i++) t[i] = Math.max(0, Math.min(1, (frontZ - pos.getZ(i)) / span));
+  geo.setAttribute('aDepthT', new THREE.BufferAttribute(t, 1));
 }
 
 /** Creasing averages the rim normals of the caps with the first bevel ring, which

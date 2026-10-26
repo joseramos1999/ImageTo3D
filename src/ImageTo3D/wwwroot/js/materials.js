@@ -120,23 +120,56 @@ export const MATERIALS = [
     make: o => new THREE.MeshBasicMaterial({ color: o.color, wireframe: true }) },
 ];
 
+// The bevel's own material («Bisel»): a coloured, golden, chrome or glowing edge on any face.
+const BEVELS = {
+  color: c => new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.3, metalness: 0.1, clearcoat: 0.6, clearcoatRoughness: 0.2 }),
+  gold: () => MATERIALS.find(m => m.id === 'gold').make({}),
+  chrome: () => MATERIALS.find(m => m.id === 'chrome').make({}),
+  neon: c => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.8, roughness: 0.4 }),
+};
+export const BEVEL_MATERIALS = [
+  { id: 'side', label: 'Como los laterales' }, { id: 'color', label: 'Color' },
+  { id: 'gold', label: 'Oro' }, { id: 'chrome', label: 'Cromo' }, { id: 'neon', label: 'Neón (brilla)' },
+];
+
+/**
+ * [face, sides, bevel] for the geometry's three groups (geometry.js). opts: { color, logoMap,
+ * sideMode: 'logo' (the material's own sides) | 'custom' (a colour) | 'gradient' (from the
+ * material at the front to sideColor at the back), sideColor, bevelMat, bevelColor, tune }.
+ */
 export function createMaterials(id, opts) {
   const preset = MATERIALS.find(m => m.id === id) || MATERIALS[0];
-  const made = preset.make({ ...opts, color: new THREE.Color(opts.color), sideColor: new THREE.Color(opts.sideColor) });
-  const pair = Array.isArray(made) ? made : [made, made];
-  if (!opts.tune || !Object.keys(opts.tune).length) return pair;
-  const face = tuneMaterial(pair[0], opts.tune);
-  return [face, pair[1] === pair[0] ? face : tuneMaterial(pair[1], opts.tune)];
+  const sideColor = new THREE.Color(opts.sideColor);
+  const made = preset.make({ ...opts, color: new THREE.Color(opts.color), sideColor });
+  let [face, side] = Array.isArray(made) ? made : [made, made];
+  if (opts.tune && Object.keys(opts.tune).length) {
+    const same = side === face;
+    face = tuneMaterial(face, opts.tune);
+    side = same ? face : tuneMaterial(side, opts.tune);
+  }
+  // «Colores del logo» makes its own coloured sides; any other material gets them here, in its
+  // own finish (a gold face with black walls stays metal).
+  if (opts.sideMode === 'custom' && side === face) {
+    side = face.clone();
+    side.map = null;
+    side.color.copy(sideColor);
+    if (side.emissive && side.emissive.getHex() !== 0) { side.emissiveMap = null; side.emissive.copy(sideColor); }
+  } else if (opts.sideMode === 'gradient') {
+    if (side === face) side = face.clone();
+    side.userData.gradTo = sideColor;   // Stage.decorateMaterial blends toward it along aDepthT
+  }
+  const bevel = BEVELS[opts.bevelMat]?.(new THREE.Color(opts.bevelColor || '#ffd36b')) || side;
+  return [face, side, bevel];
 }
 
 /** The values «Ajustar material» starts from for a material (what it has untouched). */
 export function materialBase(id) {
-  const [m] = createMaterials(id, { color: '#ffffff', sideColor: '#ffffff', sideMode: 'logo' });
+  const mats = createMaterials(id, { color: '#ffffff', sideColor: '#ffffff', sideMode: 'logo' }), m = mats[0];
   const base = {
     roughness: m.roughness ?? null, metalness: m.metalness ?? null, clearcoat: m.isMeshPhysicalMaterial ? m.clearcoat : 0,
     emissive: m.emissive && m.emissive.getHex() !== 0 ? m.emissiveIntensity : 0,
   };
-  m.dispose();
+  disposeMaterials(mats);
   return base;
 }
 

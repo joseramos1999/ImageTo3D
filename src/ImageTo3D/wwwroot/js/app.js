@@ -8,7 +8,7 @@ import { initMaskUI } from './mask-ui.js';
 import { initMaskEditor } from './mask-editor.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, readProjectFile, PROJECT_EXT } from './project.js';
-import { MATERIALS, createMaterials, disposeMaterials, materialBase } from './materials.js';
+import { MATERIALS, BEVEL_MATERIALS, createMaterials, disposeMaterials, materialBase } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, migrateAnimationSettings } from './animations.js';
 import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence-ui.js';
 import { initUpdates } from './update-ui.js';
@@ -34,7 +34,7 @@ const $ = sel => document.querySelector(sel);
 // ───────── state ─────────
 const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
-  material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24', tune: {},
+  material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24', bevelMat: 'side', bevelColor: '#ffd36b', tune: {},
   anim: 'rotate-y', animTab: 'preset', speed: 1,
   keys: structuredClone(DEFAULT_KEYS),
   mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
@@ -437,7 +437,7 @@ function syncBrandEnvironment() {
 function applyMaterials() {
   if (!logo) return;
   const old = materials;
-  const opts = { logoMap: source?.colorTex, color: state.color, sideMode: state.sideMode, sideColor: state.sideColor };
+  const opts = { logoMap: source?.colorTex, color: state.color, sideMode: state.sideMode, sideColor: state.sideColor, bevelMat: state.bevelMat, bevelColor: state.bevelColor };
   const base = createMaterials(state.material, { ...opts, tune: tuneOf(state.material) });
   // With layers, each piece is one colour. A layer with its own material takes that colour as
   // the tint (plastic in that colour…), and "logo colours" are drawn flat in it, faces and
@@ -452,7 +452,7 @@ function applyMaterials() {
     const key = id + color;
     if (sets.has(key)) return sets.get(key);
     // As dim as the textured walls are (×0.72), so a layered logo reads the same.
-    const sides = state.sideMode === 'logo' ? { sideMode: 'custom', sideColor: '#' + new THREE.Color(color).multiplyScalar(0.72).getHexString() } : {};
+    const sides = state.sideMode === 'logo' && id === 'logo' ? { sideMode: 'custom', sideColor: '#' + new THREE.Color(color).multiplyScalar(0.72).getHexString() } : {};
     const mats = createMaterials(id, { ...opts, ...sides, ...(layerStyleOf(layer).material ? { color } : {}), tune: tuneOf(id) });
     if (id === 'logo' && !info.gradient) {
       const m = mats[0], tint = tuneOf(id).tint;
@@ -1123,7 +1123,7 @@ const FORMAT = {
   off: v => Number(v) === 0 ? 'Off' : Number(v).toFixed(2),
 };
 const ON_CHANGE = {
-  depth: rebuildMeshes, bevel: rebuildMeshes, smooth: rebuildOutlines,
+  depth: rebuildMeshes, bevel: () => { rebuildMeshes(); syncColorRows(); }, smooth: rebuildOutlines,
   scale: () => { stage.setUserScale(state.scale); stage.fitShadow(); },
   lightGain: () => stage.setLighting(state.lighting, state.lightGain),
   bloom: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
@@ -1301,8 +1301,12 @@ function syncColorRows() {
   const m = MATERIALS.find(x => x.id === state.material);
   $('#color-row').hidden = !m?.tint;
   syncTuneUI();
-  $('#side-row').hidden = state.material !== 'logo';
-  $('#side-color').hidden = state.sideMode !== 'custom';
+  $('#side-mode [data-v=logo]').textContent = state.material === 'logo' ? 'Del logo' : 'Del material';
+  $('#side-color').hidden = state.sideMode === 'logo';
+  $('#bevel-row').hidden = state.bevel <= 1e-4;
+  $('#bevel-mat').value = state.bevelMat;
+  $('#bevel-color').value = state.bevelColor;
+  $('#bevel-color').hidden = state.bevelMat !== 'color' && state.bevelMat !== 'neon';
 }
 
 function renderAnimationList() {
@@ -1979,6 +1983,9 @@ function init() {
   $('#color').value = state.color;
   $('#color').addEventListener('input', e => { state.color = e.target.value; applyMaterials(); syncBrandEnvironment(); save(); });
   $('#side-color').value = state.sideColor;
+  BEVEL_MATERIALS.forEach(b => $('#bevel-mat').add(new Option(b.label, b.id)));
+  $('#bevel-mat').addEventListener('change', e => { state.bevelMat = e.target.value; applyMaterials(); syncColorRows(); save(); });
+  $('#bevel-color').addEventListener('input', e => { state.bevelColor = e.target.value; applyMaterials(); save(); });
   $('#side-color').addEventListener('input', e => { state.sideColor = e.target.value; applyMaterials(); save(); });
   $('#particles').checked = state.particles;
   $('#particles').addEventListener('change', e => { state.particles = e.target.checked; stage.setParticles(state.particles, state.density); save(); });

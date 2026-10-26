@@ -4,7 +4,7 @@ import { MATERIALS } from './materials.js';
 
 export const PRESET_BASE = {
   anim: 'rotate-y', speed: 1, mode: 'single',
-  material: 'logo', color: '#c8f55a', sideMode: 'logo',
+  material: 'logo', color: '#c8f55a', sideMode: 'logo', bevelMat: 'side',
   lighting: 'studio', lightGain: 1, env: 'studio', envSpin: false, floor: 'shadow', bg: 'vignette',
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1, camMove: 'none', camAmount: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,

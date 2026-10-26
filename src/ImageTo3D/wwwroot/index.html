@@ -134,9 +134,14 @@
         <div class="row" id="side-row">
           <label>Laterales</label>
           <div class="seg" id="side-mode">
-            <button data-v="logo">Del logo</button><button data-v="custom">Color</button>
+            <button data-v="logo" title="Los laterales del propio material">Del logo</button><button data-v="custom" title="Laterales de un color">Color</button><button data-v="gradient" title="Del material en la cara a un color en la parte de atrás">Degradado</button>
           </div>
-          <input type="color" id="side-color">
+          <input type="color" id="side-color" aria-label="Color de los laterales">
+        </div>
+        <div class="row" id="bevel-row">
+          <label for="bevel-mat">Bisel</label>
+          <select class="select" id="bevel-mat"></select>
+          <input type="color" id="bevel-color" aria-label="Color del bisel">
         </div>
         <details class="tune" id="tune">
           <summary>Ajustar material</summary>

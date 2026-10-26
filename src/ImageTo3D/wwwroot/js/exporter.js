@@ -340,6 +340,14 @@ export async function exportPNG({ canvas, renderFrame, width, height }) {
   return { blob, filename: `logo3d-${width}x${height}-${stamp()}.png` };
 }
 
+/** The engine's own vertex data (aDepthT: the side gradient) means nothing to a 3D viewer: it is
+ *  left out of the file while exporting (the clones share the live geometry, so it comes back). */
+async function withoutEngineAttributes(root, run) {
+  const taken = [];
+  root.traverse(o => { const a = o.geometry?.attributes.aDepthT; if (a) { taken.push([o.geometry, a]); o.geometry.deleteAttribute('aDepthT'); } });
+  try { return await run(); } finally { taken.forEach(([g, a]) => g.setAttribute('aDepthT', a)); }
+}
+
 /** A copy of the logo at rest with world transforms baked in. */
 function restClone(logoGroup, userScale) {
   const root = new THREE.Group();
@@ -367,7 +375,7 @@ export async function exportGLB(logoGroup, userScale, animation = null) {
   if (!animation) {
     const root = restClone(logoGroup, userScale);
     root.name = 'Logo3D';
-    const result = await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: true });
+    const result = await withoutEngineAttributes(root, () => new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: true }));
     return { blob: new Blob([result], { type: 'model/gltf-binary' }), filename: `logo3d-${stamp()}.glb` };
   }
   // Scene → Logo3D (user scale) → Movimiento (animated) → Logo → Pieza_n; and Camara.
@@ -433,7 +441,7 @@ export async function exportGLB(logoGroup, userScale, animation = null) {
   }
   const clip = new THREE.AnimationClip('Animacion', animation.seconds, tracks);
   scene.updateMatrixWorld(true);
-  const result = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: false, animations: tracks.length ? [clip] : [] });
+  const result = await withoutEngineAttributes(scene, () => new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: false, animations: tracks.length ? [clip] : [] }));
   return { blob: new Blob([result], { type: 'model/gltf-binary' }), filename: `logo3d-animado-${stamp()}.glb`, tracks: tracks.length, frames: n };
 }
 
