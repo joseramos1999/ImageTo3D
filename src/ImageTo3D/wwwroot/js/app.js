@@ -14,6 +14,7 @@ import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence
 import { initUpdates } from './update-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
+import { ENVIRONMENTS } from './environments.js';
 import { exportVideo, exportPngSequence, exportAvi, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
 import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
 import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
@@ -37,7 +38,7 @@ const DEFAULTS = {
   anim: 'rotate-y', animTab: 'preset', speed: 1,
   keys: structuredClone(DEFAULT_KEYS),
   mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
-  lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
+  lighting: 'studio', lightGain: 1, env: 'studio', envSpin: false, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, bloomAlpha: true, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', aviCodec: 'mjpg', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
@@ -402,6 +403,8 @@ function renderStillInto(target) {
 /** Pushes every scene setting in `state` to the engine (used by presets and on start-up). */
 function applySceneToEngine() {
   stage.setLighting(state.lighting, state.lightGain);
+  stage.setEnvironment(state.env, state.color);
+  stage.envSpin = !!state.envSpin;
   stage.setBackground((BACKGROUNDS.find(b => b.id === state.bg) || BACKGROUNDS[0]).spec);
   syncTransparency();
   stage.setFloor(state.floor);
@@ -421,6 +424,14 @@ function syncTransparency() {
   $('#viewport').classList.toggle('transparent', stage.transparent);
   $('#bloom-alpha-row').hidden = !stage.transparent;
   updateExportEstimate();
+}
+
+/** «Color de marca» reflections follow the colour, once the picker settles (each bake costs some ms). */
+let brandEnvTimer = 0;
+function syncBrandEnvironment() {
+  if (state.env !== 'brand') return;
+  clearTimeout(brandEnvTimer);
+  brandEnvTimer = setTimeout(() => stage.setEnvironment('brand', state.color), 120);
 }
 
 function applyMaterials() {
@@ -1626,6 +1637,8 @@ function applyTemplate(t) {
 function syncSceneUI() {
   markPicked($('#materials'), state.material);
   markPicked($('#lighting'), state.lighting);
+  markPicked($('#environments'), state.env);
+  $('#env-spin').checked = !!state.envSpin;
   markPicked($('#floors'), state.floor);
   markPicked($('#cameras'), state.camMove);
   markPicked($('#backgrounds'), state.bg);
@@ -1873,6 +1886,9 @@ function init() {
   initAnimations();
   initBackgrounds();
   chips('#lighting', LIGHTING, 'lighting', l => stage.setLighting(l.id, state.lightGain));
+  chips('#environments', ENVIRONMENTS, 'env', e => stage.setEnvironment(e.id, state.color));
+  $('#env-spin').checked = !!state.envSpin;
+  $('#env-spin').addEventListener('change', e => { state.envSpin = e.target.checked; stage.envSpin = state.envSpin; save(); });
   chips('#floors', FLOORS, 'floor', f => stage.setFloor(f.id));
   chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; });
   segmented('#side-mode', 'sideMode', () => { applyMaterials(); syncColorRows(); });
@@ -1888,7 +1904,7 @@ function init() {
   segmented('#print-orient', 'printOrient', updatePrint);
 
   $('#color').value = state.color;
-  $('#color').addEventListener('input', e => { state.color = e.target.value; applyMaterials(); save(); });
+  $('#color').addEventListener('input', e => { state.color = e.target.value; applyMaterials(); syncBrandEnvironment(); save(); });
   $('#side-color').value = state.sideColor;
   $('#side-color').addEventListener('input', e => { state.sideColor = e.target.value; applyMaterials(); save(); });
   $('#particles').checked = state.particles;

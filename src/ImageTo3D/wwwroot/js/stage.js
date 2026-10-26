@@ -1,13 +1,13 @@
 // Renderer, scene, lighting, floors, background, bloom, particles and camera moves.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { Effects } from './effects.js';
+import { environmentScene, disposeEnvironmentScene } from './environments.js';
 
 const TAU = Math.PI * 2;
 /** A fixed pseudo-random 0..1 per index: the same scene renders the same in every session. */
@@ -62,6 +62,8 @@ export const BACKGROUNDS = [
   { id: 'lime', label: 'Lima', css: '#c8f55a', spec: { type: 'radial', a: '#d8ff7a', b: '#8fb52a' } },
   { id: 'cream', label: 'Crema', css: '#f5ead6', spec: { type: 'radial', a: '#fff8ea', b: '#e2d2b4' } },
   { id: 'green', label: 'Verde croma', css: '#00b140', spec: { type: 'solid', a: '#00b140' } },   // chroma key
+  // The reflection environment itself, blurred: the logo sits in the light it reflects.
+  { id: 'environment', label: 'Entorno (lo que se refleja, desenfocado)', css: 'radial-gradient(circle at 50% 30%,#d9dde6,#5d6170 45%,#14151b)', spec: { type: 'environment' } },
   // Checkerboard in the UI; renders with alpha 0 around the logo (PNG, WebM and PNG sequence keep it).
   { id: 'transparent', label: 'Transparente', css: 'repeating-conic-gradient(#3a3a46 0 25%, #22222a 0 50%) 0 0 / 10px 10px', spec: { type: 'transparent' } },
 ];
@@ -216,9 +218,10 @@ export class Stage {
     this.controls.minDistance = 3;
     this.controls.maxDistance = 60;
 
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.envMaps = new Map();   // baked environments, most recently used last
+    this.envSpin = false;
+    this.setEnvironment('studio');
 
     // root (user scale) → motion (animated) → logo pieces
     this.root = new THREE.Group();
@@ -440,14 +443,46 @@ export class Stage {
     cam.updateProjectionMatrix();
   }
 
+  // ── Reflection environment ──
+  /**
+   * Bakes (once, then cached) the reflection environment `id` (environments.js); 'brand' is
+   * tinted with `color`. Shown as the background too when that is «Entorno».
+   */
+  setEnvironment(id, color = '#ffffff') {
+    const key = id === 'brand' ? id + color : id;
+    let tex = this.envMaps.get(key);
+    if (tex) this.envMaps.delete(key);
+    else {
+      const { scene, sigma } = environmentScene(id, color);
+      tex = this.pmrem.fromScene(scene, sigma).texture;
+      disposeEnvironmentScene(scene);
+    }
+    this.envMaps.set(key, tex);
+    // A handful is plenty (each is a few MB of GPU memory); the oldest goes.
+    while (this.envMaps.size > 6) {
+      const [oldKey, old] = this.envMaps.entries().next().value;
+      this.envMaps.delete(oldKey);
+      old.dispose();
+    }
+    this.envId = id;
+    this.scene.environment = tex;
+    if (this.bgSpec?.type === 'environment') this.scene.background = tex;
+  }
+
   // ── Background ──
   setBackground(spec) {
     if (spec === this.bgSpec && (this.scene.background || this.transparent)) return;
     this.bgSpec = spec;
     this.transparent = spec.type === 'transparent';
     if (this.bgTexture) { this.bgTexture.dispose(); this.bgTexture = null; }
+    this.scene.backgroundBlurriness = 0;
+    this.scene.backgroundIntensity = 1;
     if (this.transparent) {
       this.scene.background = null;
+    } else if (spec.type === 'environment') {
+      this.scene.background = this.scene.environment;
+      this.scene.backgroundBlurriness = 0.4;
+      this.scene.backgroundIntensity = 0.7;
     } else if (spec.type === 'solid') {
       this.scene.background = new THREE.Color(spec.a);
     } else {
@@ -640,6 +675,11 @@ export class Stage {
     const savedFov = cam.fov;
     if (this.cameraMove !== 'none') this.applyCameraMove(cycle);
     if (this.fx.cameraWanted) this.applyCameraKeys(this.fx.cameraWanted);
+    // «Reflejos en movimiento»: the environment turns once per clip (the lights stay put), so
+    // even a still logo gleams. The background, when it is the environment, turns with it.
+    const envRot = this.scene.environmentRotation, envY = envRot.y;
+    if (this.envSpin) envRot.y = envY + TAU * cycle;
+    this.scene.backgroundRotation.copy(envRot);
 
     if (transparent || this.transparent) {
       // With alpha: the scene clears to nothing and keeps its alpha through the composer, so the
@@ -659,6 +699,7 @@ export class Stage {
       this.composer.render();
     }
 
+    envRot.y = envY;
     cam.position.copy(savedPos);
     cam.quaternion.copy(savedQuat);
     if (cam.fov !== savedFov) { cam.fov = savedFov; cam.updateProjectionMatrix(); }

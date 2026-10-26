@@ -5,18 +5,18 @@ import { MATERIALS } from './materials.js';
 export const PRESET_BASE = {
   anim: 'rotate-y', speed: 1, mode: 'single',
   material: 'logo', color: '#c8f55a', sideMode: 'logo',
-  lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette',
+  lighting: 'studio', lightGain: 1, env: 'studio', envSpin: false, floor: 'shadow', bg: 'vignette',
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1, camMove: 'none', camAmount: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
 };
 
 const RAW = [
   { id: 'gold-lux', label: 'Oro de lujo',
-    set: { anim: 'turntable', material: 'gold', lighting: 'dramatic', floor: 'mirror', bg: 'black', bloom: 0.25, bloomTh: 0.8, particles: true, density: 0.8, shine: true } },
+    set: { anim: 'turntable', material: 'gold', lighting: 'dramatic', env: 'softbox', floor: 'mirror', bg: 'black', bloom: 0.25, bloomTh: 0.8, particles: true, density: 0.8, shine: true } },
   { id: 'chrome-y2k', label: 'Cromo Y2K',
     set: { anim: 'zoom-spin', material: 'chrome', lightGain: 1.1, floor: 'grid', bg: 'indigo', bloom: 0.3, bloomTh: 0.75, shine: true } },
   { id: 'neon-night', label: 'Neón nocturno',
-    set: { anim: 'float', material: 'neon', color: '#ff2fa8', lighting: 'neon', floor: 'mirror', bg: 'black', bloom: 0.55, bloomTh: 0.75 } },
+    set: { anim: 'float', material: 'neon', color: '#ff2fa8', lighting: 'neon', env: 'neon', floor: 'mirror', bg: 'black', bloom: 0.55, bloomTh: 0.75 } },
   { id: 'corporate', label: 'Corporativo',
     set: { mode: 'sequence', seqIntro: 'intro-rise', seqLoop: 'breathe', seqReps: 1, seqOutro: 'none', seqTransition: 0.6, lighting: 'soft', floor: 'shadow', bg: 'white' } },
   { id: 'glass', label: 'Cristal',
