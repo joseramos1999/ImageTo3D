@@ -31,9 +31,11 @@ jobs:
           - arch: arm64          # Apple Silicon (M1…)
             runner: macos-15
             app: dist/mac-arm64/ImageTo3D.app
+            software_gl: '0'
           - arch: x64            # Intel
             runner: macos-15-intel
             app: dist/mac/ImageTo3D.app
+            software_gl: '1'   # no GPU on these runners: WebGL by software (SwiftShader)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     defaults:
@@ -70,6 +72,8 @@ jobs:
 
       - name: Prueba de humo
         timeout-minutes: 15
+        env:
+          IMAGETO3D_SOFTWARE_GL: ${{ matrix.software_gl }}
         run: |
           "${{ matrix.app }}/Contents/MacOS/ImageTo3D" --smoke-test 2>&1 | tee smoke.log
           exit "${PIPESTATUS[0]}"

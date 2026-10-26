@@ -23,7 +23,11 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: t
 app.setName('ImageTo3D');
 // CI Macs are virtual machines, often without a usable GPU: let the smoke test fall back to
 // Chrome's software WebGL instead of failing (a real Mac always has Metal).
-if (SMOKE) app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+// GitHub's Intel Macs have no GPU at all: there IMAGETO3D_SOFTWARE_GL=1 forces it.
+if (SMOKE) {
+  app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+  if (process.env.IMAGETO3D_SOFTWARE_GL === '1') app.commandLine.appendSwitch('use-angle', 'swiftshader');
+}
 
 let win = null, files = null, ready = false, readyTimer = null, updateTimer = null, available = null;
 let pendingProject = process.argv.slice(1).find(a => a.toLowerCase().endsWith('.i3d') && fs.existsSync(a)) || null;
