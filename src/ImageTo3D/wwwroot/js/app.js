@@ -38,7 +38,7 @@ const DEFAULTS = {
   keys: structuredClone(DEFAULT_KEYS),
   mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
   lighting: 'studio', lightGain: 1, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
-  bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, particles: false, density: 1,
+  bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, bloomAlpha: true, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', aviCodec: 'mjpg', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
   printBase: 'none', printMargin: 3, printBaseThick: 2, printOrient: 'flat', printMinWall: 0.8,
@@ -406,6 +406,7 @@ function applySceneToEngine() {
   syncTransparency();
   stage.setFloor(state.floor);
   stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius);
+  stage.bloomInAlpha = state.bloomAlpha !== false;
   stage.setLightAngle(state.lightAz, state.lightEl);
   stage.setShine(state.shine, state.shineGain);
   stage.setParticles(state.particles, state.density);
@@ -418,6 +419,7 @@ function applySceneToEngine() {
 /** The checkerboard behind the viewport and the export notes follow the "Transparente" background. */
 function syncTransparency() {
   $('#viewport').classList.toggle('transparent', stage.transparent);
+  $('#bloom-alpha-row').hidden = !stage.transparent;
   updateExportEstimate();
 }
 
@@ -1532,6 +1534,7 @@ function syncSceneUI() {
   $('#color').value = state.color;
   $('#particles').checked = state.particles;
   $('#shine').checked = state.shine;
+  $('#bloom-alpha').checked = state.bloomAlpha !== false;
   syncLightPad();
   syncModeMarks();
   syncDurationUI();
@@ -1786,6 +1789,8 @@ function init() {
   $('#side-color').addEventListener('input', e => { state.sideColor = e.target.value; applyMaterials(); save(); });
   $('#particles').checked = state.particles;
   $('#particles').addEventListener('change', e => { state.particles = e.target.checked; stage.setParticles(state.particles, state.density); save(); });
+  $('#bloom-alpha').checked = state.bloomAlpha !== false;
+  $('#bloom-alpha').addEventListener('change', e => { state.bloomAlpha = e.target.checked; stage.bloomInAlpha = state.bloomAlpha; save(); });
   $('#shine').checked = state.shine;
   $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
   initLightPad();

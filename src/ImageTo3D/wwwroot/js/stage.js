@@ -136,6 +136,41 @@ const FadingReflectorShader = {
     }`,
 };
 
+// OutputPass (tone mapping + sRGB) for colours premultiplied by their alpha, which is what the
+// composer holds over a transparent background: the scene clears to alpha 0 and the bloom adds
+// light with alpha = its brightest channel. Tone mapping applies to the straight colour and the
+// canvas takes it premultiplied again; opaque pixels (alpha ≥ 1) come out as with OutputPass.
+const PREMULTIPLIED_OUTPUT_FRAGMENT = /* glsl */`
+  precision highp float;
+  uniform sampler2D tDiffuse;
+  #include <tonemapping_pars_fragment>
+  #include <colorspace_pars_fragment>
+  varying vec2 vUv;
+  void main() {
+    vec4 c = texture2D( tDiffuse, vUv );
+    float a = clamp( c.a, 0.0, 1.0 );
+    vec3 rgb = c.a < 1.0 ? c.rgb / max( c.a, 1e-4 ) : c.rgb;
+    #ifdef LINEAR_TONE_MAPPING
+      rgb = LinearToneMapping( rgb );
+    #elif defined( REINHARD_TONE_MAPPING )
+      rgb = ReinhardToneMapping( rgb );
+    #elif defined( CINEON_TONE_MAPPING )
+      rgb = CineonToneMapping( rgb );
+    #elif defined( ACES_FILMIC_TONE_MAPPING )
+      rgb = ACESFilmicToneMapping( rgb );
+    #elif defined( AGX_TONE_MAPPING )
+      rgb = AgXToneMapping( rgb );
+    #elif defined( NEUTRAL_TONE_MAPPING )
+      rgb = NeutralToneMapping( rgb );
+    #elif defined( CUSTOM_TONE_MAPPING )
+      rgb = CustomToneMapping( rgb );
+    #endif
+    #ifdef SRGB_TRANSFER
+      rgb = sRGBTransferOETF( vec4( rgb, 1.0 ) ).rgb;
+    #endif
+    gl_FragColor = vec4( rgb * a, a );
+  }`;
+
 function gridTexture() {
   const size = 1024, cells = 32;
   const c = document.createElement('canvas');
@@ -206,6 +241,7 @@ export class Stage {
     this.lightingId = 'studio';
     this.lightGain = 1;
     this.bgSpec = BACKGROUNDS[0].spec;
+    this.bloomInAlpha = true;   // with a transparent background the halo is kept as light with alpha
     this.shineUniforms = { uShinePos: { value: 0 }, uShineWidth: { value: 0.35 }, uShineStrength: { value: 0 } };
     this.particles = null;
     this.fx = new Effects(this);
@@ -221,7 +257,10 @@ export class Stage {
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x || 1, size.y || 1), 0, 0.45, 0.85);
     this.bloom.enabled = false;
     composer.addPass(this.bloom);
-    composer.addPass(new OutputPass());
+    const output = new OutputPass();
+    output.material.fragmentShader = PREMULTIPLIED_OUTPUT_FRAGMENT;
+    output.material.needsUpdate = true;
+    composer.addPass(output);
     return composer;
   }
 
@@ -603,15 +642,17 @@ export class Stage {
     if (this.fx.cameraWanted) this.applyCameraKeys(this.fx.cameraWanted);
 
     if (transparent || this.transparent) {
-      // Straight to the canvas with alpha: the post-processing chain would flatten it.
-      // Of the floor only its shadow survives (a mirror or grid floating in nothing looks wrong),
-      // and there is no bloom.
-      const bg = this.scene.background;
+      // With alpha: the scene clears to nothing and keeps its alpha through the composer, so the
+      // bloom's halo survives as semi-transparent light (unless «Halo en la transparencia» is off).
+      // Of the floor only its shadow survives (a mirror or grid floating in nothing looks wrong).
+      const bg = this.scene.background, bloomOn = this.bloom.enabled;
       const hidden = this.floorGroup.children.filter(o => o.visible && !o.material?.isShadowMaterial);
       hidden.forEach(o => { o.visible = false; });
       this.scene.background = null;
       this.renderer.setClearColor(0x000000, 0);
-      this.renderer.render(this.scene, cam);
+      if (!this.bloomInAlpha) this.bloom.enabled = false;
+      this.composer.render();
+      this.bloom.enabled = bloomOn;
       this.scene.background = bg;
       hidden.forEach(o => { o.visible = true; });
     } else {
