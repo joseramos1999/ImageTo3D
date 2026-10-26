@@ -1,0 +1,43 @@
+{
+  "name": "imageto3d",
+  "productName": "ImageTo3D",
+  "version": "1.1.0",
+  "description": "PNG a 3D animado: convierte un logo en 3D, lo anima y lo exporta en vídeo, imagen o modelo.",
+  "author": "ImageTo3D",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke-test",
+    "dist": "electron-builder --mac dmg zip --arm64 --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.imageto3d.app",
+    "productName": "ImageTo3D",
+    "copyright": "ImageTo3D",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "host/**", "package.json"],
+    "extraResources": [{ "from": "../src/ImageTo3D/wwwroot", "to": "wwwroot" }],
+    "fileAssociations": [{ "ext": "i3d", "name": "Proyecto ImageTo3D", "role": "Editor", "mimeType": "application/x-imageto3d" }],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "target": ["dmg", "zip"],
+      "darkModeSupport": true,
+      "minimumSystemVersion": "12.0"
+    },
+    "dmg": {
+      "title": "ImageTo3D ${version}",
+      "artifactName": "ImageTo3D-${version}-mac-${arch}.dmg"
+    },
+    "zip": { "artifactName": "ImageTo3D-${version}-mac-${arch}.zip" },
+    "afterPack": "build/after-pack.js"
+  }
+}

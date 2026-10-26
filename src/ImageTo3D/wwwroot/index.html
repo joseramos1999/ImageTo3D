@@ -11,7 +11,8 @@
     addEventListener('error', e => {
       if (window.__engineReady) return;
       const what = e.message || ('no se pudo cargar ' + (e.target && (e.target.src || e.target.href) || 'un recurso'));
-      window.chrome && window.chrome.webview && window.chrome.webview.postMessage({ type: 'engine-error', message: what });
+      const native = (window.chrome && window.chrome.webview) || window.imageto3dHost;
+      if (native) native.postMessage({ type: 'engine-error', message: what });
     }, true);
   </script>
   <script type="importmap">

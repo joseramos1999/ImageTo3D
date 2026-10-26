@@ -17,7 +17,7 @@ import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { exportVideo, exportPngSequence, exportAvi, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
 import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
 import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
-import { host } from './host.js';
+import { host, localizeKeys } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
 import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
 import { renderLayersPanel } from './layers-ui.js';
@@ -1689,6 +1689,7 @@ function initDragDrop() {
 }
 
 function init() {
+  localizeKeys();
   initSliders();
   fx.clip = (axis, value, keepAbove) => stage.setLogoClip(axis, value, keepAbove);
   fx.deform = (type, amount, phase) => stage.fx.deform(type, amount, phase);

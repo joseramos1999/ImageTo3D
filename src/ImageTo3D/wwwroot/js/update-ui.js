@@ -87,10 +87,15 @@ export function initUpdates({ toast, beforeInstall, isBusy }) {
     const title = el('div', 'up-title', `Nueva versión ${msg.version}`);
     // A release without a published SHA-256 cannot be checked, so it is not installed from
     // here (the host refuses it too): the button opens its page on GitHub instead.
-    const verified = msg.verified !== false;
-    const sub = el('div', 'up-sub', verified
-      ? `Tienes la ${msg.current}. La actualización tarda menos de un minuto y conserva tus proyectos.`
-      : `Tienes la ${msg.current}. Esta versión no publica su huella SHA-256, así que no se puede comprobar ni instalar automáticamente: descárgala desde su página de GitHub.`);
+    // On a Mac (unsigned app) the update is downloaded by hand; elsewhere it installs itself,
+    // unless the release lacks the SHA-256 needed to check it.
+    const manual = !!msg.manual;
+    const verified = msg.verified !== false && !manual;
+    const sub = el('div', 'up-sub', manual
+      ? `Tienes la ${msg.current}. Descarga el .dmg de la nueva versión desde GitHub, ábrelo y arrastra ImageTo3D a Aplicaciones (sustituye a la anterior y conserva tus proyectos).`
+      : verified
+        ? `Tienes la ${msg.current}. La actualización tarda menos de un minuto y conserva tus proyectos.`
+        : `Tienes la ${msg.current}. Esta versión no publica su huella SHA-256, así que no se puede comprobar ni instalar automáticamente: descárgala desde su página de GitHub.`);
     const notes = el('div', 'up-notes');
     notes.append(...notesNodes(msg.notes));
     notes.hidden = true;

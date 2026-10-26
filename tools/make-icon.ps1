@@ -60,3 +60,15 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 $images | ForEach-Object { $w.Write($_) }
 $w.Close()
 Write-Host "Icono generado: $out"
+
+# macOS (mac/build/icon.png, electron-builder hace el .icns): 1024 px con el margen de los
+# iconos de macOS (el dibujo ocupa ~824 px centrados).
+$macOut = Join-Path $PSScriptRoot '..\mac\build\icon.png'
+$inner = [System.Drawing.Image]::FromStream((New-Object System.IO.MemoryStream (, (Draw-Icon 824))))
+$mac = New-Object System.Drawing.Bitmap 1024, 1024, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+$mg = [System.Drawing.Graphics]::FromImage($mac)
+$mg.Clear([System.Drawing.Color]::Transparent)
+$mg.DrawImage($inner, 100, 100, 824, 824)
+$mg.Dispose()
+$mac.Save((Join-Path (Resolve-Path -LiteralPath (Split-Path $macOut)).Path 'icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+$mac.Dispose()

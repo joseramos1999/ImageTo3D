@@ -1,0 +1,113 @@
+# The macOS app (mac/, Electron) is built on GitHub's Macs: one build per processor, each one
+# smoke-tested (it exports MP4, WebM, PNG, STL and a batch and checks the files), then the .dmg
+# and .zip are attached to the release. The Windows installer is still built and published
+# from Windows (Compilar-ImageTo3D.ps1, Crear instalador.bat).
+name: macOS
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Versión a la que adjuntar el .dmg (p. ej. v1.1.0). Vacío: solo compilar y probar.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Mac ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64          # Apple Silicon (M1…)
+            runner: macos-15
+            app: dist/mac-arm64/ImageTo3D.app
+          - arch: x64            # Intel
+            runner: macos-15-intel
+            app: dist/mac/ImageTo3D.app
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mac
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # unsigned: ad-hoc signature only (build/after-pack.js)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}   # a manual run builds the branch it runs on
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mac/package-lock.json
+
+      - name: Dependencias
+        run: |
+          npm ci --no-audit --no-fund
+          node node_modules/electron/install.js   # npm 11 skips Electron's download script
+
+      - name: Versión de la release
+        if: env.TAG != ''
+        run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: Compilar
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
+
+      - name: Comprobar la firma
+        run: codesign --verify --deep --strict --verbose=2 "${{ matrix.app }}"
+
+      - name: Prueba de humo
+        timeout-minutes: 15
+        run: |
+          "${{ matrix.app }}/Contents/MacOS/ImageTo3D" --smoke-test 2>&1 | tee smoke.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Informe de la prueba
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.arch }}
+          path: mac/smoke.log
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          path: |
+            mac/dist/*.dmg
+            mac/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Adjuntar a la release
+    needs: build
+    if: github.event.release.tag_name != '' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mac-*
+          merge-multiple: true
+          path: out
+      - name: Subir .dmg y .zip
+        run: |
+          ls -l out
+          gh release upload "$TAG" out/*.dmg out/*.zip --clobber

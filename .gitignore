@@ -485,3 +485,8 @@ $RECYCLE.BIN/
 build/
 dist/
 tools/out/
+
+# macOS app (Electron)
+mac/node_modules/
+mac/dist/
+!mac/build/

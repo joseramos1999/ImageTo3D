@@ -3,6 +3,7 @@
 // smooth an edge — or clicks a piece to drop it / a hole to fill it.
 // Edits are stored in the mask (strokes, removed) in 0..1 image coordinates and applied by
 // the tracer (trace.js), so they survive projects, undo and any change of resolution.
+import { keys } from './host.js';
 import { decodeImage, previewBitmap } from './imaging.js';
 
 const $ = sel => document.querySelector(sel);
@@ -230,7 +231,7 @@ export function initMaskEditor({ getSource, commit }) {
     const edits = (m?.strokes?.length || 0) + (m?.removed?.length || 0);
     $('#me-undo').disabled = !edits;
     $('#me-clear').disabled = !edits;
-    $('#me-hint').textContent = TOOL_HINTS[tool] + ' Cada edición vuelve a trazar el logo; Ctrl+Z también la deshace.';
+    $('#me-hint').textContent = TOOL_HINTS[tool] + keys(' Cada edición vuelve a trazar el logo; Ctrl+Z también la deshace.');
     draw();
   }
 

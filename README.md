@@ -1,16 +1,31 @@
 # ImageTo3D
 
-App de escritorio para Windows que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4, WebM o AVI (los dos con transparencia), secuencia PNG, imagen PNG o modelo GLB/STL.
+App de escritorio para Windows y macOS que convierte un PNG (o JPG, WEBP, SVG o un texto) en un logo 3D extruido, permite darle material, iluminación y animación (intro, bucle y salida), y lo exporta como vídeo MP4, WebM o AVI (los dos con transparencia), secuencia PNG, imagen PNG o modelo GLB/STL.
 
 Funciona sin conexión: todo se renderiza en local, con la GPU.
 
 ## Descargar
+
+### Windows
 
 Descarga `ImageTo3D-Setup-<versión>.exe` desde la [última versión](https://github.com/joseramos1999/ImageTo3D/releases/latest) y ejecútalo. Funciona en Windows 10 y 11 de 64 bits, sin instalar nada más (lleva .NET dentro). Se instala para tu usuario, sin pedir administrador.
 
 El instalador no está firmado, así que la primera vez Windows SmartScreen mostrará «Windows protegió su PC»: pulsa **Más información** → **Ejecutar de todas formas**.
 
 Desde la 1.0.1 la app se actualiza sola: al arrancar (y cada 12 h) consulta la última versión en GitHub y, si hay una nueva, avisa con sus novedades. «Actualizar ahora» descarga el instalador, comprueba su huella SHA-256 con la publicada en GitHub, lo instala en silencio y vuelve a abrir la app, conservando proyectos y recientes. También se puede comprobar a mano pulsando el número de versión en la barra superior.
+
+### macOS
+
+Descarga de la [última versión](https://github.com/joseramos1999/ImageTo3D/releases/latest) el `.dmg` de tu Mac: `ImageTo3D-<versión>-mac-arm64.dmg` para Apple Silicon (M1, M2, M3, M4…) o `ImageTo3D-<versión>-mac-x64.dmg` para Intel (menú Apple → Acerca de este Mac → «Chip» o «Procesador»). Ábrelo y arrastra ImageTo3D a Aplicaciones. Funciona en macOS 12 Monterey o posterior.
+
+La app no está firmada con un certificado de Apple, así que la primera vez macOS no la deja abrir («No se puede abrir porque Apple no puede comprobar…»):
+1. Pulsa **OK** (o **Hecho**) en ese aviso.
+2. Abre **Ajustes del Sistema → Privacidad y seguridad**, baja hasta «Seguridad» y pulsa **Abrir igualmente** junto a ImageTo3D. Confirma con tu contraseña.
+3. Las veces siguientes se abre con normalidad.
+
+Si macOS dice que la app «está dañada», es la cuarentena de los archivos descargados; en Terminal: `xattr -dr com.apple.quarantine /Applications/ImageTo3D.app`.
+
+En el Mac también avisa de las versiones nuevas, pero no se actualiza sola (sin firma, macOS no deja que una app se sustituya): el aviso abre la página de la versión, descargas el `.dmg` nuevo y arrastras la app encima de la anterior. Tus proyectos y recientes se conservan.
 
 ## Qué hace
 
@@ -120,6 +135,20 @@ Qué hace el instalador ([installer/ImageTo3D.iss](installer/ImageTo3D.iss)):
 Para probar el código actual en tu propio PC, doble clic en `Instalar en este PC.bat` (o `Compilar-ImageTo3D.ps1 -Instalar`): hace lo mismo, instala el resultado encima de la versión que tengas (para tu usuario, o para todos si la tenías así, y entonces Windows pide permiso) y abre la app.
 
 `-SinInstalador` solo publica. El icono se regenera con `tools/make-icon.ps1`.
+
+## App para macOS
+
+La versión de Mac ([mac/](mac)) es el mismo motor (`src/ImageTo3D/wwwroot`, sin copias) dentro de Electron en lugar de WPF + WebView2. [main.js](mac/main.js) hace de `MainWindow.xaml.cs`: sirve el motor desde `app://imageto3d/`, muestra los diálogos nativos de guardar y de carpeta, escribe los vídeos por trozos ([host/files.js](mac/host/files.js)), abre los `.i3d` desde Finder, muestra la pantalla de error con «Reintentar» y avisa de versiones nuevas ([host/updates.js](mac/host/updates.js)). La página solo ve el canal de mensajes de [preload.js](mac/preload.js), y [host.js](src/ImageTo3D/wwwroot/js/host.js) usa el de WebView2 o el de Electron; en Electron los trozos de vídeo viajan como binario en el propio mensaje.
+
+Para probarla en cualquier sistema (también en Windows), con Node.js 24:
+
+```bash
+cd mac && npm ci && node node_modules/electron/install.js && npm start
+```
+
+`npm run smoke` hace la prueba de humo: arranca sin ventana, comprueba WebGL 2 y el codificador H.264, importa un SVG, exporta MP4, WebM transparente, PNG, STL y un lote de dos imágenes, comprueba cada archivo en disco y los shaders de los efectos, y sale con 0 si todo pasa.
+
+El `.dmg` solo se puede compilar en un Mac, así que lo hace GitHub Actions ([.github/workflows/macos.yml](.github/workflows/macos.yml)): al publicar una release compila en un Mac Apple Silicon y en uno Intel, pasa la prueba de humo a cada app y adjunta `ImageTo3D-<versión>-mac-arm64.dmg` / `-x64.dmg` (y sus `.zip`) a la release. La versión sale de la etiqueta. También se puede lanzar a mano desde la pestaña Actions, con o sin etiqueta a la que adjuntar. La app lleva solo una firma ad hoc (sin Apple Developer ID): ver «Descargar → macOS». El icono (`mac/build/icon.png`) se genera con `tools/make-icon.ps1`.
 
 ## Licencias de terceros
 

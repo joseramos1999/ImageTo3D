@@ -34,7 +34,10 @@ class FileSink {
     this.inflight += bytes.byteLength;
     this.chain = this.chain.then(async () => {
       if (this.error) return;
-      if (this.shared) {
+      if (host.binary) {
+        // Electron: the bytes travel in the message itself.
+        await host.request({ type: 'file-write-bin', id: this.id, pos: position, data: bytes }, ['file-ack']);
+      } else if (this.shared) {
         // One chunk at a time: the buffer is reused once the host has written it out.
         const room = this.shared.byteLength;
         for (let off = 0; off < bytes.length; off += room) {
@@ -70,7 +73,7 @@ class FileSink {
   }
 
   release() {
-    if (this.shared) window.chrome.webview.releaseBuffer(this.shared);
+    if (this.shared) window.chrome?.webview?.releaseBuffer(this.shared);
     this.shared = null;
   }
 }
