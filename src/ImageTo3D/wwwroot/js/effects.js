@@ -144,23 +144,27 @@ export class Effects {
   opacity(value) { this.opacityWanted = value; }
   glow(value) { this.uniforms.uFxGlow.value = value ?? 0; }
 
-  /** Logo materials fade by their opacity (made transparent the first time it is needed). */
+  /** Logo materials fade by their opacity: transparent only while fading, so once the logo is
+   *  fully there it draws (and refracts, sorts, casts shadows) exactly as an untouched one. */
   updateOpacity() {
     const logo = this.stage.logo;
     if (!logo) return;
     const v = this.opacityWanted;
     if (v == null && !this.opacityApplied) return;
+    const fading = v != null && v < 1;
     const seen = new Set();
     for (const piece of logo.children) {
       for (const m of Array.isArray(piece.material) ? piece.material : [piece.material]) {
         if (!m || seen.has(m)) continue;
         seen.add(m);
         m.userData.baseOpacity ??= m.opacity;
-        if (v != null && v < 1 && !m.transparent) { m.transparent = true; m.needsUpdate = true; }
+        m.userData.baseTransparent ??= m.transparent;
+        const transparent = fading || m.userData.baseTransparent;
+        if (m.transparent !== transparent) { m.transparent = transparent; m.needsUpdate = true; }
         m.opacity = m.userData.baseOpacity * (v ?? 1);
       }
     }
-    this.opacityApplied = v != null;
+    this.opacityApplied = fading;
   }
 
   // ── camera, light ──

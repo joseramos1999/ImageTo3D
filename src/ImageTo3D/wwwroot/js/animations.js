@@ -105,6 +105,13 @@ export const ANIMATIONS = [
     apply: ({ m, p }) => { m.scale.setScalar(1 + 0.08 * Math.sin(TAU * p)); } },
   { id: 'breathe', label: 'Respirar', kind: 'loop', period: 4,
     apply: ({ m, p }) => { const s = 1 + 0.05 * Math.sin(TAU * p); m.scale.set(s, s, 1 + 0.4 * Math.sin(TAU * p)); } },
+  { id: 'glow-breathe', label: 'Respirar luz', kind: 'loop', period: 3,
+    // The logo lights up from within and dims again, in its own colours (a halo with «Brillo»).
+    apply: ({ m, p }) => {
+      const e = 0.5 - 0.5 * Math.cos(TAU * p);
+      fx.glow(0.55 * e * fx.weight);
+      m.scale.setScalar(1 + 0.012 * e);
+    } },
   { id: 'flip', label: 'Voltereta', kind: 'loop', period: 2.5, tall: true,
     apply: ({ m, p }) => { m.rotation.x = TAU * easeInOut(clamp01(p / 0.7)); } },
   { id: 'coin-flip', label: 'Moneda', kind: 'loop', period: 2,
@@ -600,6 +607,23 @@ export const ANIMATIONS = [
       const layers = 28, h = Math.floor(q * layers + 1) / layers;
       clip('y', -size.y / 2 - 0.05 + (size.y + 0.1) * h);
     } },
+  { id: 'intro-fade', label: 'Fundido', kind: 'intro', duration: 1.2,
+    // The plainest entrance of all: the logo appears from nothing, where it rests.
+    apply: ({ q }) => { fx.opacity(easeOutCubic(q)); } },
+  { id: 'intro-ignite', label: 'Encender', kind: 'intro', duration: 2,
+    // Switched on like a neon tube: dark, two quick flashes, then on with a burst of light of
+    // its own that settles. The whole logo at once (each piece by itself: «Neón»).
+    apply: ({ q }) => {
+      const flash = (a, b) => q >= a && q < b;
+      if (q < 0.42) {
+        const lit = flash(0.12, 0.17) || flash(0.25, 0.28) || flash(0.31, 0.35);
+        fx.opacity(lit ? 1 : 0.12 * Math.min(1, q / 0.06));   // from nothing to a dark tube
+        fx.glow(lit ? 1.1 : 0);
+        return;
+      }
+      const s = (q - 0.42) / 0.58;
+      fx.glow(1.4 * (1 - s) * (1 - s));
+    } },
   { id: 'intro-neon', label: 'Neón', kind: 'intro', duration: 1.8, pieces: true,
     // Each piece buzzes on like a neon tube: a few flickers, then steady.
     apply: ({ ps, q }) => ps.forEach((piece, i) => {
@@ -822,6 +846,8 @@ const REVERSED_INTROS = [
   ['intro-portal', 'outro-portal', 'Portal fuera'],
   ['intro-converge', 'outro-converge', 'Hacia fuera'],
   ['intro-burst', 'outro-burst', 'Al centro'],
+  ['intro-fade', 'outro-fade', 'Desvanecer'],
+  ['intro-ignite', 'outro-ignite', 'Apagón'],
 ];
 for (const [from, id, label] of REVERSED_INTROS) {
   const src = ANIMATIONS.find(a => a.id === from);
