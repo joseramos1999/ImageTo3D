@@ -1132,6 +1132,7 @@ function renderAnimationList() {
       // While dragging: the preview follows, nothing is saved or redrawn yet.
       live: keys => { state.keys = keys; if (state.mode !== 'keys') { state.mode = 'keys'; syncModeMarks(); } },
       use: useKeys,
+      captureCamera,
     });
     return;
   }
@@ -1139,6 +1140,25 @@ function renderAnimationList() {
     state.mode = 'single';   // picking a single animation leaves the sequence
     onAnimationChanged();
   }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
+}
+
+/**
+ * «Capturar encuadre»: the camera as the user left it, as keyframe values relative to the
+ * automatic framing (the inverse of Stage.applyCameraKeys). The view then goes back to that
+ * framing, so at the key's instant the clip shows exactly what was captured.
+ */
+function captureCamera() {
+  const rad = THREE.MathUtils.radToDeg, target = stage.controls.target;
+  const now = new THREE.Spherical().setFromVector3(stage.camera.position.clone().sub(target));
+  const base = new THREE.Spherical().setFromVector3(stage.framePosition(activeRound()));
+  const wrap = a => ((a + 180) % 360 + 360) % 360 - 180;
+  const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)) * 100) / 100;
+  frameCamera();
+  return {
+    zoom: clamp(base.radius / Math.max(0.01, now.radius), 0.4, 3),
+    orbit: clamp(wrap(rad(now.theta - base.theta)), -180, 180),
+    height: clamp(rad(base.phi - now.phi), -60, 60),
+  };
 }
 
 /** Makes the keyframes the active animation (after any change in their panel). */
@@ -1708,8 +1728,15 @@ function initDragDrop() {
     if (file) openFile(file);
   });
   window.addEventListener('paste', e => {
-    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
-    if (item) openFile(item.getAsFile());
+    const file = [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
+    if (file) { openFile(file); return; }
+    // An SVG copied as code (Figma «Copy as SVG», Illustrator, icon sites) arrives as text;
+    // in a text box it is just text.
+    if (e.target.matches?.('input, textarea, [contenteditable]')) return;
+    const text = (e.clipboardData?.getData('image/svg+xml') || e.clipboardData?.getData('text/plain') || '').trim();
+    if (!/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(text)) return;
+    e.preventDefault();
+    openFile(new File([text], 'SVG pegado.svg', { type: 'image/svg+xml' }));
   });
 }
 

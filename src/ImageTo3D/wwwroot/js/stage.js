@@ -310,6 +310,13 @@ export class Stage {
 
   /** Places the camera so the logo fills the frame comfortably. */
   frame(round = false) {
+    this.camera.position.copy(this.framePosition(round));
+    this.controls.target.set(0, 0, 0);
+    this.controls.update();
+  }
+
+  /** Where frame() puts the camera (aiming at the origin), without moving it. */
+  framePosition(round = false) {
     const s = this.root.scale.x, sz = this.logoSize;
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
@@ -318,9 +325,7 @@ export class Stage {
     const dv = (fh * s / 2 * margin) / Math.tan(vfov / 2);
     const dh = (fw * s / 2 * margin) / Math.tan(hfov / 2);
     const d = Math.max(dv, dh, 4) + sz.z * s / 2;
-    this.camera.position.set(0, d * 0.1, d);
-    this.controls.target.set(0, 0, 0);
-    this.controls.update();
+    return new THREE.Vector3(0, d * 0.1, d);
   }
 
   // ── Lighting ──

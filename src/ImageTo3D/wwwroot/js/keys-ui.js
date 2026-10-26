@@ -86,7 +86,11 @@ export function renderKeysPanel(container, state, on) {
   const reset = el('button', 'btn small', 'Poner en reposo');
   reset.title = 'Todos los valores de este punto en su posición normal';
   reset.onclick = () => on.change({ ...keys, points: keys.points.map((p, k) => (k === current ? {} : p)) });
-  tools.append(copyPrev, reset);
+  // The camera as the user left it with the mouse becomes this point's zoom, orbit and height.
+  const capture = el('button', 'btn small', 'Capturar encuadre');
+  capture.title = 'Coloca la cámara con el ratón (arrastrar para girar, rueda para acercar) y pulsa: este punto guarda ese encuadre';
+  capture.onclick = () => on.change(withPoint(current, on.captureCamera()));
+  tools.append(capture, copyPrev, reset);
 
   const foot = el('div', 'seq-foot');
   const total = el('span', 'seq-total', `Duración ${String(state.seconds).replace('.', ',')} s (control «Duración» en Exportar)`);
