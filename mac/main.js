@@ -46,7 +46,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
-      backgroundThrottling: !SMOKE,   // the smoke test renders in a hidden window
+      backgroundThrottling: !SMOKE,   // the smoke test renders in an unfocused window
     },
   });
   files = new Files({ window: win, post, smokeDir: SMOKE ? fs.mkdtempSync(path.join(os.tmpdir(), 'imageto3d-smoke-')) : null });
@@ -63,7 +63,8 @@ function createWindow() {
     clearTimeout(readyTimer);
     readyTimer = setTimeout(() => { if (!ready) showError('El motor 3D no ha terminado de arrancar. Puede que la tarjeta gráfica no admita WebGL 2.'); }, 25000);
   });
-  win.once('ready-to-show', () => { if (!SMOKE) win.show(); });
+  // The smoke test shows the window without focus: a never-shown window may not paint on macOS.
+  win.once('ready-to-show', () => { if (SMOKE) win.showInactive(); else win.show(); });
   win.on('closed', () => { files.discardAll(); win = null; });
   win.loadURL(ENGINE_URL);
 }

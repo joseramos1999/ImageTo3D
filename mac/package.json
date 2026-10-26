@@ -31,13 +31,12 @@
       "hardenedRuntime": false,
       "target": ["dmg", "zip"],
       "darkModeSupport": true,
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.0",
+      "artifactName": "ImageTo3D-${version}-mac-${arch}.${ext}"
     },
     "dmg": {
-      "title": "ImageTo3D ${version}",
-      "artifactName": "ImageTo3D-${version}-mac-${arch}.dmg"
+      "title": "ImageTo3D ${version}"
     },
-    "zip": { "artifactName": "ImageTo3D-${version}-mac-${arch}.zip" },
     "afterPack": "build/after-pack.js"
   }
 }

@@ -146,7 +146,7 @@ Para probarla en cualquier sistema (también en Windows), con Node.js 24:
 cd mac && npm ci && node node_modules/electron/install.js && npm start
 ```
 
-`npm run smoke` hace la prueba de humo: arranca sin ventana, comprueba WebGL 2 y el codificador H.264, importa un SVG, exporta MP4, WebM transparente, PNG, STL y un lote de dos imágenes, comprueba cada archivo en disco y los shaders de los efectos, y sale con 0 si todo pasa.
+`npm run smoke` hace la prueba de humo: arranca la app sin tocarla, comprueba WebGL 2 y el codificador H.264, importa un SVG, exporta MP4, WebM transparente, PNG, STL y un lote de dos imágenes, comprueba cada archivo en disco y los shaders de los efectos, y sale con 0 si todo pasa.
 
 El `.dmg` solo se puede compilar en un Mac, así que lo hace GitHub Actions ([.github/workflows/macos.yml](.github/workflows/macos.yml)): al publicar una release compila en un Mac Apple Silicon y en uno Intel, pasa la prueba de humo a cada app y adjunta `ImageTo3D-<versión>-mac-arm64.dmg` / `-x64.dmg` (y sus `.zip`) a la release. La versión sale de la etiqueta. También se puede lanzar a mano desde la pestaña Actions, con o sin etiqueta a la que adjuntar. La app lleva solo una firma ad hoc (sin Apple Developer ID): ver «Descargar → macOS». El icono (`mac/build/icon.png`) se genera con `tools/make-icon.ps1`.
 
