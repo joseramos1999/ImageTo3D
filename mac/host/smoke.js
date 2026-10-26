@@ -118,4 +118,28 @@ async function runSmoke({ window, dir, waitFor, consoleErrors }) {
   return report;
 }
 
-module.exports = { runSmoke };
+/** On a machine with no GPU (GitHub's Intel Macs) the engine cannot start: check that the app
+ *  runs, serves the engine, has its host bridge and the H.264 encoder, and that it is WebGL
+ *  that failed — not that it rendered. */
+async function runSmokeNoGpu({ window, engineError }) {
+  const wc = window.webContents;
+  const report = { platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, noGpu: true, engineError, checks: [] };
+  const check = (name, ok, detail = '') => { report.checks.push({ name, ok: !!ok, detail }); };
+  const env = await wc.executeJavaScript(`(async () => {
+    const out = { url: location.href, bridge: typeof window.imageto3dHost?.postMessage === 'function', webgl2: !!document.createElement('canvas').getContext('webgl2') };
+    out.files = await Promise.all(['/index.html', '/js/app.js', '/js/host.js'].map(async f => { try { return (await fetch(f)).ok; } catch { return false; } }));
+    try { out.h264 = (await VideoEncoder.isConfigSupported({ codec: 'avc1.640028', width: 1280, height: 720, bitrate: 4e6, framerate: 30 })).supported; }
+    catch (e) { out.h264 = 'error: ' + e.message; }
+    return out;
+  })()`, true);
+  report.env = env;
+  check('La app arranca y abre el motor', env.url === 'app://imageto3d/index.html', env.url);
+  check('Archivos del motor servidos', env.files.every(Boolean), env.files.join(', '));
+  check('Puente con el host', env.bridge);
+  check('Codificador H.264', env.h264 === true, String(env.h264));
+  check('Sin GPU: falla solo WebGL', !env.webgl2 && /WebGL context/i.test(engineError), engineError);
+  report.ok = report.checks.every(c => c.ok);
+  return report;
+}
+
+module.exports = { runSmoke, runSmokeNoGpu };

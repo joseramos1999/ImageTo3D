@@ -9,7 +9,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { Files } = require('./host/files');
 const { checkForUpdate, isReleasePage } = require('./host/updates');
-const { runSmoke } = require('./host/smoke');
+const { runSmoke, runSmokeNoGpu } = require('./host/smoke');
 
 const HOST = 'imageto3d';
 const ENGINE_URL = `app://${HOST}/index.html`;
@@ -23,11 +23,11 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: t
 app.setName('ImageTo3D');
 // CI Macs are virtual machines, often without a usable GPU: let the smoke test fall back to
 // Chrome's software WebGL instead of failing (a real Mac always has Metal).
-// GitHub's Intel Macs have no GPU at all: there IMAGETO3D_SOFTWARE_GL=1 forces it.
-if (SMOKE) {
-  app.commandLine.appendSwitch('enable-unsafe-swiftshader');
-  if (process.env.IMAGETO3D_SOFTWARE_GL === '1') app.commandLine.appendSwitch('use-angle', 'swiftshader');
-}
+if (SMOKE) app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+// GitHub's Intel Macs have neither a GPU nor a working software WebGL: there
+// (IMAGETO3D_SMOKE_NO_GPU=1) the engine's WebGL error is expected and the test checks the rest.
+const SMOKE_NO_GPU = SMOKE && process.env.IMAGETO3D_SMOKE_NO_GPU === '1';
+let smokeStarted = false;
 
 let win = null, files = null, ready = false, readyTimer = null, updateTimer = null, available = null;
 let pendingProject = process.argv.slice(1).find(a => a.toLowerCase().endsWith('.i3d') && fs.existsSync(a)) || null;
@@ -75,7 +75,10 @@ function createWindow() {
 
 async function showError(message) {
   if (!win || win.isDestroyed()) return;
-  if (SMOKE) { console.error('ENGINE ERROR:', message); app.exit(2); return; }
+  if (SMOKE) {
+    if (SMOKE_NO_GPU && /WebGL context/i.test(message)) { smoke(message); return; }
+    console.error('ENGINE ERROR:', message); app.exit(2); return;
+  }
   const r = await dialog.showMessageBox(win, {
     type: 'error', title: 'ImageTo3D', message: 'No se pudo cargar el motor 3D', detail: message,
     buttons: ['Reintentar', 'Salir'], defaultId: 0, cancelId: 1,
@@ -132,7 +135,11 @@ ipcMain.on('host', (event, msg) => {
   }
 });
 
-async function smoke() {
+/** `noGpu`: the engine's WebGL error on a machine without a GPU; only the rest is checked. */
+async function smoke(noGpu = null) {
+  if (smokeStarted) return;
+  smokeStarted = true;
+  clearTimeout(readyTimer);
   const consoleErrors = [];
   win.webContents.on('console-message', e => {
     if (e.level === 'error') consoleErrors.push(String(e.message).slice(0, 300));
@@ -144,7 +151,8 @@ async function smoke() {
   });
   let report;
   try {
-    report = await runSmoke({ window: win, dir: files.smokeDir, waitFor, consoleErrors });
+    report = noGpu ? await runSmokeNoGpu({ window: win, engineError: noGpu })
+      : await runSmoke({ window: win, dir: files.smokeDir, waitFor, consoleErrors });
   } catch (e) {
     report = { ok: false, error: e.stack || String(e) };
   }
