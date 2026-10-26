@@ -8,7 +8,7 @@ import { initMaskUI } from './mask-ui.js';
 import { initMaskEditor } from './mask-editor.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, readProjectFile, PROJECT_EXT } from './project.js';
-import { MATERIALS, createMaterials, disposeMaterials } from './materials.js';
+import { MATERIALS, createMaterials, disposeMaterials, materialBase } from './materials.js';
 import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, migrateAnimationSettings } from './animations.js';
 import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence-ui.js';
 import { initUpdates } from './update-ui.js';
@@ -34,7 +34,7 @@ const $ = sel => document.querySelector(sel);
 // ───────── state ─────────
 const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
-  material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24',
+  material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24', tune: {},
   anim: 'rotate-y', animTab: 'preset', speed: 1,
   keys: structuredClone(DEFAULT_KEYS),
   mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
@@ -438,7 +438,7 @@ function applyMaterials() {
   if (!logo) return;
   const old = materials;
   const opts = { logoMap: source?.colorTex, color: state.color, sideMode: state.sideMode, sideColor: state.sideColor };
-  const base = createMaterials(state.material, opts);
+  const base = createMaterials(state.material, { ...opts, tune: tuneOf(state.material) });
   // With layers, each piece is one colour. A layer with its own material takes that colour as
   // the tint (plastic in that colour…), and "logo colours" are drawn flat in it, faces and
   // side walls: sampling the artwork right at a layer's edge would mix in the neighbour's
@@ -453,8 +453,15 @@ function applyMaterials() {
     if (sets.has(key)) return sets.get(key);
     // As dim as the textured walls are (×0.72), so a layered logo reads the same.
     const sides = state.sideMode === 'logo' ? { sideMode: 'custom', sideColor: '#' + new THREE.Color(color).multiplyScalar(0.72).getHexString() } : {};
-    const mats = createMaterials(id, { ...opts, ...sides, ...(layerStyleOf(layer).material ? { color } : {}) });
-    if (id === 'logo' && !info.gradient) { mats[0].map = null; mats[0].color.set(color); mats[0].needsUpdate = true; }
+    const mats = createMaterials(id, { ...opts, ...sides, ...(layerStyleOf(layer).material ? { color } : {}), tune: tuneOf(id) });
+    if (id === 'logo' && !info.gradient) {
+      const m = mats[0], tint = tuneOf(id).tint;
+      m.map = null;
+      m.color.set(color);
+      if (tint) m.color.multiply(new THREE.Color(tint));
+      if (m.emissiveMap) { m.emissiveMap = null; m.emissive.copy(m.color); }
+      m.needsUpdate = true;
+    }
     sets.set(key, mats);
     return mats;
   };
@@ -1226,9 +1233,74 @@ function initMaterials() {
   });
 }
 
+// ───────── «Ajustar material» ─────────
+// Per material id (state.tune[id]): roughness, metal, clearcoat, emission and a tint, each
+// starting from what the material has untouched. Picking a look (preset, template) clears it.
+const TUNE_SLIDERS = [
+  { key: 'roughness', label: 'Rugosidad', min: 0, max: 1, step: 0.01 },
+  { key: 'metalness', label: 'Metal', min: 0, max: 1, step: 0.01 },
+  { key: 'clearcoat', label: 'Barniz', min: 0, max: 1, step: 0.01 },
+  { key: 'emissive', label: 'Emisión (brillo propio)', min: 0, max: 2, step: 0.05 },
+];
+const tuneOf = id => state.tune?.[id] || {};
+const tuneBases = new Map();
+const tuneBase = id => { if (!tuneBases.has(id)) tuneBases.set(id, materialBase(id)); return tuneBases.get(id); };
+const tuneRows = {};
+let tuneTimer = 0;
+
+function setTune(patch) {
+  const t = { ...tuneOf(state.material), ...patch };
+  Object.keys(t).forEach(k => t[k] == null && delete t[k]);
+  state.tune = { ...(state.tune || {}), [state.material]: t };
+  if (!Object.keys(t).length) delete state.tune[state.material];
+  $('#tune').classList.toggle('changed', !!state.tune[state.material]);
+  // Dragging fires many changes: the materials are rebuilt at most every 30 ms.
+  clearTimeout(tuneTimer);
+  tuneTimer = setTimeout(() => { applyMaterials(); save(); }, 30);
+}
+
+function initTune() {
+  const box = $('#tune-sliders');
+  for (const s of TUNE_SLIDERS) {
+    const el = document.createElement('div');
+    el.className = 'slider';
+    el.innerHTML = `<div class="lbl"><span>${s.label}</span><span></span></div><input type="range" min="${s.min}" max="${s.max}" step="${s.step}" aria-label="${s.label}">`;
+    const input = el.querySelector('input'), out = el.querySelector('.lbl span:last-child');
+    const paint = () => { input.style.setProperty('--p', ((input.value - s.min) / (s.max - s.min) * 100) + '%'); out.textContent = Number(input.value).toFixed(2); };
+    input.addEventListener('input', () => { paint(); setTune({ [s.key]: Number(input.value) }); });
+    input.addEventListener('dblclick', () => { setTune({ [s.key]: null }); syncTuneUI(); });
+    tuneRows[s.key] = { el, input, paint };
+    box.append(el);
+  }
+  $('#tune-tint').addEventListener('input', e => setTune({ tint: e.target.value.toLowerCase() === '#ffffff' ? null : e.target.value }));
+  $('#tune-reset').onclick = () => {
+    if (state.tune) { state.tune = { ...state.tune }; delete state.tune[state.material]; }
+    applyMaterials(); syncTuneUI(); save();
+  };
+  syncTuneUI();
+}
+
+/** The panel shows the current material's values: its tuning, else what it has untouched. */
+function syncTuneUI() {
+  if (!tuneRows.roughness) return;
+  const base = tuneBase(state.material), t = tuneOf(state.material);
+  for (const s of TUNE_SLIDERS) {
+    const row = tuneRows[s.key], v = t[s.key] ?? base[s.key];
+    row.el.hidden = v == null || (s.key === 'clearcoat' && state.material === 'wire');
+    if (v == null) continue;
+    row.input.value = String(v);
+    row.paint();
+  }
+  // Materials that take «Color» are tinted by it; the rest (gold, chrome…) by the tint here.
+  $('#tune-tint-row').hidden = !!MATERIALS.find(x => x.id === state.material)?.tint;
+  $('#tune-tint').value = t.tint || '#ffffff';
+  $('#tune').classList.toggle('changed', Object.keys(t).length > 0);
+}
+
 function syncColorRows() {
   const m = MATERIALS.find(x => x.id === state.material);
   $('#color-row').hidden = !m?.tint;
+  syncTuneUI();
   $('#side-row').hidden = state.material !== 'logo';
   $('#side-color').hidden = state.sideMode !== 'custom';
 }
@@ -1382,7 +1454,7 @@ function renderPresets() {
 }
 
 function applyPreset(p) {
-  Object.assign(state, p.set);
+  Object.assign(state, p.set, { tune: {} });
   play.t = 0;
   applySceneToEngine();
   syncSceneUI();
@@ -1611,7 +1683,7 @@ async function renderTemplateThumbs() {
 }
 
 function applyTemplate(t) {
-  const patch = { ...t.set };
+  const patch = { ...t.set, tune: {} };
   applySettings({ ...state, ...patch });
   state.format = patch.format ?? state.format;      // not a work setting: applySettings leaves it
   // Show what the template set: its sequence, or the tab of its animation.
@@ -1883,6 +1955,7 @@ function init() {
   });
   maskUI = initMaskUI({ getSource: () => source, isVector: usingVector, commit: commitMask, openEditor: () => maskEditor.open() });
   initMaterials();
+  initTune();
   initAnimations();
   initBackgrounds();
   chips('#lighting', LIGHTING, 'lighting', l => stage.setLighting(l.id, state.lightGain));

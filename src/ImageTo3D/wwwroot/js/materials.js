@@ -123,7 +123,48 @@ export const MATERIALS = [
 export function createMaterials(id, opts) {
   const preset = MATERIALS.find(m => m.id === id) || MATERIALS[0];
   const made = preset.make({ ...opts, color: new THREE.Color(opts.color), sideColor: new THREE.Color(opts.sideColor) });
-  return Array.isArray(made) ? made : [made, made];
+  const pair = Array.isArray(made) ? made : [made, made];
+  if (!opts.tune || !Object.keys(opts.tune).length) return pair;
+  const face = tuneMaterial(pair[0], opts.tune);
+  return [face, pair[1] === pair[0] ? face : tuneMaterial(pair[1], opts.tune)];
+}
+
+/** The values «Ajustar material» starts from for a material (what it has untouched). */
+export function materialBase(id) {
+  const [m] = createMaterials(id, { color: '#ffffff', sideColor: '#ffffff', sideMode: 'logo' });
+  const base = {
+    roughness: m.roughness ?? null, metalness: m.metalness ?? null, clearcoat: m.isMeshPhysicalMaterial ? m.clearcoat : 0,
+    emissive: m.emissive && m.emissive.getHex() !== 0 ? m.emissiveIntensity : 0,
+  };
+  m.dispose();
+  return base;
+}
+
+/**
+ * «Ajustar material»: { tint, roughness, metalness, clearcoat, emissive } over a preset. The tint
+ * multiplies the colour (a rose or a brand-tinted chrome); a clearcoat on a standard material
+ * turns it into a physical one; emission lights the surface in its own colours (or artwork).
+ * Returns the material to use (the same one, or its physical copy).
+ */
+export function tuneMaterial(m, tune) {
+  if (tune.clearcoat > 0 && m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial) {
+    const p = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(p, m);
+    p.defines = { STANDARD: '', PHYSICAL: '' };   // Standard's copy() leaves only STANDARD
+    m.dispose();
+    m = p;
+  }
+  if (tune.tint && m.color) m.color.multiply(new THREE.Color(tune.tint));
+  if (tune.roughness != null && 'roughness' in m) m.roughness = tune.roughness;
+  if (tune.metalness != null && 'metalness' in m) m.metalness = tune.metalness;
+  if (tune.clearcoat != null && m.isMeshPhysicalMaterial) m.clearcoat = tune.clearcoat;
+  if (tune.emissive != null && m.emissive) {
+    if (tune.emissive > 0 && m.emissive.getHex() === 0) {
+      if (m.map) { m.emissiveMap = m.map; m.emissive.set(1, 1, 1); } else m.emissive.copy(m.color);
+    }
+    m.emissiveIntensity = tune.emissive;
+  }
+  return m;
 }
 
 export function disposeMaterials(mats) {
