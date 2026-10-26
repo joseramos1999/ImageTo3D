@@ -526,44 +526,135 @@ function updateHud(ms) {
   setParts($('#hud'), parts);
 }
 
-// ───────── preview loop ─────────
-let animClock = 0, camClock = 0, last = performance.now();
+// ───────── preview loop and playback bar ─────────
+// The preview plays the clip exactly as it exports: one clock, the playhead (seconds into the
+// clip), poses the logo, the camera move and the particles, and wraps at the end of the clip.
+// It can be paused, scrubbed and stepped frame by frame; a PNG is the frame under it.
+const play = { t: 0, playing: true, scrubbing: false };
+let last = performance.now();
 function tick(now) {
   requestAnimationFrame(tick);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (exporting || !logo) return;
-  animClock += dt * state.speed;
-  camClock += dt;
+  const clip = clipSeconds();
+  if (play.playing && !play.scrubbing) play.t += dt;
+  play.t = ((play.t % clip) + clip) % clip;
   stage.controls.update();
-  stage.render(posePreview(false));
+  stage.render(posePreview());
+  syncPlaybar();
 }
 
-/**
- * Poses the logo at the preview's current instant and returns the camera / particle phase.
- * A chained clip (sequence, keyframes) runs on the camera's clock, exactly as it exports;
- * `still` holds a single intro on its last pose (a PNG) instead of replaying it.
- */
-function posePreview(still) {
+/** Poses the logo at instant `t` of the clip (the playhead) exactly as the export does, and
+ *  returns the camera / particle phase for that instant. */
+function posePreview(t = play.t) {
   const tl = currentTimeline(), clip = clipSeconds();
-  if (tl) tl.pose(camClock % clip, stage.motion, logo.children);
+  const u = ((t % clip) + clip) % clip;
+  if (tl) tl.pose(u, stage.motion, logo.children);
   else {
     const anim = getAnimation(state.anim);
-    poseAt(anim, still && anim.kind === 'intro' ? anim.duration : animClock, stage.motion, logo.children, still);
+    poseAt(anim, u * fitLoop(anim, clip, state.speed).speed, stage.motion, logo.children, true);
   }
-  return (camClock % clip) / clip;
+  return u / clip;
+}
+
+const fpsNow = () => Number(state.fps) || 30;
+const frameCount = () => Math.max(1, Math.round(clipSeconds() * fpsNow()));
+const secsText = s => s.toFixed(2).replace('.', ',') + ' s';
+
+function setPlaying(on) {
+  play.playing = on;
+  const b = $('#pb-play');
+  b.textContent = on ? '❚❚' : '▶';
+  b.setAttribute('aria-label', on ? 'Pausar' : 'Reproducir');
+}
+
+/** Moves the playhead to a frame (the export's own instants, t = i / fps) and pauses. */
+function stepFrames(n) {
+  setPlaying(false);
+  const N = frameCount(), f = Math.round(play.t * fpsNow());
+  play.t = (((f + n) % N) + N) % N / fpsNow();
+}
+
+/** The parts of the clip under the playhead: intro / loop / outro, as the sequence bar draws them. */
+function clipSegments() {
+  const tl = currentTimeline(), clip = clipSeconds();
+  if (tl?.kind === 'keys') return [['keys', clip, 'Keyframes']];
+  if (tl) {
+    const p = sequenceParts(state);
+    return [['intro', tl.introSecs, 'Intro'], ['loop', tl.mid, p.loop ? `× ${state.seqReps}` : 'Quieto'], ['outro', tl.outroSecs, 'Salida']];
+  }
+  const anim = getAnimation(state.anim);
+  if (anim.kind === 'intro') {
+    const d = Math.min(clip, anim.duration / state.speed);
+    return [['intro', d, anim.label], ['still', clip - d, 'Quieto']];
+  }
+  if (!anim.period) return [['still', clip, anim.label]];
+  const n = fitLoop(anim, clip, state.speed).cycles;
+  return [['loop', clip, `${anim.label} · ${n} ciclo${n > 1 ? 's' : ''}`]];
+}
+
+let playbarKey = '';
+function syncPlaybar() {
+  const clip = clipSeconds(), segs = clipSegments();
+  const key = JSON.stringify(segs.map(s => [s[0], s[1].toFixed(3), s[2]]));
+  if (key !== playbarKey) {
+    playbarKey = key;
+    $('#pb-segs').replaceChildren(...segs.filter(s => s[1] > 1e-6).map(([cls, len, label]) => {
+      const seg = document.createElement('span');
+      seg.className = `pb-seg ${cls}`;
+      seg.style.flexGrow = String(len);
+      seg.textContent = label;
+      seg.title = `${label} · ${secsText(len)}`;
+      return seg;
+    }));
+  }
+  const u = play.t / clip;
+  $('#pb-head').style.left = (u * 100) + '%';
+  const f = Math.min(frameCount() - 1, Math.floor(play.t * fpsNow() + 1e-6));
+  const text = `${secsText(play.t).slice(0, -2)} / ${secsText(clip)} · fotograma ${f + 1}/${frameCount()}`;
+  const out = $('#pb-time');
+  if (out.textContent !== text) {
+    out.textContent = text;
+    const track = $('#pb-track');
+    track.setAttribute('aria-valuemax', clip.toFixed(2));
+    track.setAttribute('aria-valuenow', play.t.toFixed(2));
+    track.setAttribute('aria-valuetext', text);
+  }
+}
+
+function initPlaybar() {
+  const track = $('#pb-track');
+  $('#pb-play').onclick = () => setPlaying(!play.playing);
+  const seek = e => {
+    const r = track.getBoundingClientRect();
+    const u = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    // Snapped to a frame: what is shown is a frame the export renders.
+    play.t = Math.min(frameCount() - 1, Math.round(u * clipSeconds() * fpsNow())) / fpsNow();
+  };
+  track.addEventListener('pointerdown', e => { play.scrubbing = true; track.setPointerCapture(e.pointerId); seek(e); });
+  track.addEventListener('pointermove', e => { if (play.scrubbing) seek(e); });
+  const end = () => { play.scrubbing = false; };
+  track.addEventListener('pointerup', end);
+  track.addEventListener('pointercancel', end);
+  track.addEventListener('keydown', e => {
+    if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); setPlaying(false); play.t = e.key === 'Home' ? 0 : (frameCount() - 1) / fpsNow(); }
+  });
+  setPlaying(true);
 }
 
 // ───────── layout: letterboxed viewport in the export aspect ─────────
 function layoutViewport() {
   const box = $('#stage').getBoundingClientRect();
   const [aw, ah] = sizeOf(state);
-  const availW = box.width - 40, availH = box.height - 40;
+  // The stage's padding (20 px each side), and below the viewport the playback bar and its gap.
+  const availW = box.width - 40, availH = box.height - 40 - $('#playbar').offsetHeight - 10;
   let w = availW, h = w * ah / aw;
   if (h > availH) { h = availH; w = h * aw / ah; }
   w = Math.max(50, Math.floor(w)); h = Math.max(50, Math.floor(h));
   const vp = $('#viewport');
   vp.style.width = w + 'px'; vp.style.height = h + 'px';
+  $('#playbar').style.width = Math.min(availW, Math.max(w, 420)) + 'px';
   stage.setSize(w, h);
 }
 new ResizeObserver(layoutViewport).observe($('#stage'));
@@ -629,8 +720,8 @@ async function runExport(out = null) {
       if (fmt === 'png') {
         const r = await exportPNG({
           canvas, width: w, height: h,
-          // What the preview shows right now: the sequence or keyframes with their camera and light.
-          renderFrame: () => stage.render(posePreview(true)),
+          // The frame under the playhead, with the camera and light of that instant.
+          renderFrame: () => stage.render(posePreview()),
         });
         await deliver(r.blob, r.filename);
         return 'ok';
@@ -959,9 +1050,23 @@ async function toggleRecentMenu(open) {
   menu.replaceChildren(...items);
 }
 
+/** Keys for the playback bar: not while typing, on a slider or select, or in a dialog. */
+const playbackKeysFor = e => !e.ctrlKey && !e.metaKey && !e.altKey &&
+  !e.target.closest?.('input, select, textarea, [role=slider]:not(#pb-track)') &&
+  !document.querySelector('.modal:not([hidden])');
+
 function initShortcuts() {
   addEventListener('keydown', e => {
     if (e.key === 'Escape') { toggleRecentMenu(false); return; }
+    if (playbackKeysFor(e)) {
+      // Space plays / pauses even with a button focused (that button is not pressed).
+      if (e.key === ' ') { e.preventDefault(); if (!e.repeat) setPlaying(!play.playing); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepFrames((e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1));
+        return;
+      }
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     // Typing in a text box keeps its own undo.
     const t = e.target;
@@ -972,6 +1077,8 @@ function initShortcuts() {
     else if (k === 's') { e.preventDefault(); saveProjectFile(); }
     else if (k === 'o') { e.preventDefault(); $('#file').click(); }
   });
+  // A focused button fires its click on Space's keyup: that press was the playback key.
+  addEventListener('keyup', e => { if (e.key === ' ' && playbackKeysFor(e)) e.preventDefault(); });
 }
 
 /** Start-up: reopen the last work, or show the demo logo the very first time. */
@@ -1180,8 +1287,7 @@ function useSequence() {
 }
 
 function onAnimationChanged() {
-  animClock = 0;
-  camClock = 0;
+  play.t = 0;
   // Spinning in its own plane (in any part of a sequence) needs the wider framing.
   if (logo && activeRound() && !framedRound) frameCamera();
   updateFloorForAnim();
@@ -1266,8 +1372,7 @@ function renderPresets() {
 
 function applyPreset(p) {
   Object.assign(state, p.set);
-  animClock = 0;
-  camClock = 0;
+  play.t = 0;
   applySceneToEngine();
   syncSceneUI();
   save();
@@ -1576,8 +1681,7 @@ async function renderThumbs() {
     stage.camera.position.copy(cam);
     stage.controls.target.copy(target);
     stage.controls.update();
-    poseAt(getAnimation(state.anim), animClock, stage.motion, logo.children, false);
-    stage.render((camClock % clipSeconds()) / clipSeconds());
+    stage.render(posePreview());
 
     const img = document.querySelector(`#animations .preset[data-id="${p.id}"] .thumb`);
     if (img) img.innerHTML = `<img src="${thumbs.get(p.id)}" alt="">`;
@@ -1770,7 +1874,7 @@ function init() {
   initBackgrounds();
   chips('#lighting', LIGHTING, 'lighting', l => stage.setLighting(l.id, state.lightGain));
   chips('#floors', FLOORS, 'floor', f => stage.setFloor(f.id));
-  chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; camClock = 0; });
+  chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; });
   segmented('#side-mode', 'sideMode', () => { applyMaterials(); syncColorRows(); });
   segmented('#format', 'format', syncExportOpts);
   initSize();
@@ -1794,6 +1898,7 @@ function init() {
   $('#shine').checked = state.shine;
   $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
   initLightPad();
+  initPlaybar();
   syncDurationUI();
 
   const fileInput = $('#file');
@@ -1870,4 +1975,5 @@ try {
 }
 
 // Handy for debugging from DevTools (F12 in debug builds).
-window.__app = { state, stage, THREE, get logo() { return logo; }, get source() { return source; }, resetPose };
+// `tick` draws one preview frame by hand (a background page gets no animation frames).
+window.__app = { state, stage, THREE, get logo() { return logo; }, get source() { return source; }, resetPose, play, tick };

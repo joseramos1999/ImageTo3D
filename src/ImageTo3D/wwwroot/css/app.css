@@ -198,7 +198,7 @@ input[type=color] {
 /* ── stage ── */
 .stage {
   position: relative; min-width: 0; min-height: 0;
-  display: grid; place-items: center; padding: 20px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px;
   background:
     radial-gradient(circle at 50% 40%, #15151c, #09090c 70%);
 }
@@ -470,3 +470,31 @@ input[type=color] {
 .update-panel.busy .up-progress { display: block; }
 .up-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 #up-bar { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+
+/* Playback bar under the viewport: play / pause, the clip's parts and the playhead, the time. */
+.playbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.playbar .btn.icon { width: 30px; flex: none; }
+.pb-track {
+  position: relative; flex: 1; min-width: 60px; height: 22px; cursor: pointer; border-radius: 6px;
+  touch-action: none; outline: none;
+}
+.pb-track:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.pb-segs { display: flex; height: 100%; gap: 2px; border-radius: 6px; overflow: hidden; opacity: .85; }
+.pb-seg {
+  flex-basis: 0; min-width: 6px; display: grid; place-items: center; overflow: hidden; white-space: nowrap;
+  font-size: 10.5px; font-weight: 700; color: var(--accent-ink); pointer-events: none;
+}
+.pb-seg.intro { background: #5ab4f5; }
+.pb-seg.loop { background: var(--accent); }
+.pb-seg.outro { background: #f5a65a; }
+.pb-seg.keys { background: #b48cff; }
+.pb-seg.still { background: #3a3a48; color: var(--muted); }
+.pb-head {
+  position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.5); border-radius: 1px; pointer-events: none;
+}
+.pb-head::before {
+  content: ''; position: absolute; top: -4px; left: -4px; width: 10px; height: 6px;
+  background: #fff; border-radius: 2px;
+}
+.pb-time { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -147,6 +147,14 @@
         <canvas id="canvas"></canvas>
         <div class="hint">Arrastra para rotar · Rueda para zoom · Doble clic para reencuadrar</div>
       </div>
+      <div class="playbar" id="playbar">
+        <button class="btn icon small" id="pb-play" type="button" title="Reproducir / pausar (Espacio) · ← → fotograma a fotograma (Mayús: de 10 en 10)" aria-label="Pausar">❚❚</button>
+        <div class="pb-track" id="pb-track" tabindex="0" role="slider" aria-label="Instante del clip (← → fotograma a fotograma)" aria-valuemin="0">
+          <div class="pb-segs" id="pb-segs"></div>
+          <div class="pb-head" id="pb-head"></div>
+        </div>
+        <span class="pb-time" id="pb-time"></span>
+      </div>
       <div class="drop-overlay" id="drop-overlay">Suelta la imagen para convertirla en 3D</div>
     </section>
 
