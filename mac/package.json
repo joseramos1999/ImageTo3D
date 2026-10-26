@@ -1,7 +1,7 @@
 {
   "name": "imageto3d",
   "productName": "ImageTo3D",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "PNG a 3D animado: convierte un logo en 3D, lo anima y lo exporta en vídeo, imagen o modelo.",
   "author": "ImageTo3D",
   "license": "UNLICENSED",
