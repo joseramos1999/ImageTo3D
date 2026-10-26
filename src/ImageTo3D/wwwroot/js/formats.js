@@ -15,6 +15,19 @@ export const SIZES = [
 
 export const CUSTOM_MIN = 64, CUSTOM_MAX = 7680;
 
+/**
+ * Composition guides over the viewport (never rendered): thirds and the safe areas, and for
+ * vertical video where each app lays its own interface over it — approximate, and the apps move
+ * it now and then. Zones are [x, y, width, height] in % of the frame.
+ */
+export const GUIDES = [
+  { id: 'none', label: 'Sin guías' },
+  { id: 'thirds', label: 'Tercios' },
+  { id: 'tiktok', label: 'TikTok', vertical: true, zones: [[0, 0, 100, 9], [0, 78, 82, 22], [84, 38, 16, 47]] },
+  { id: 'reels', label: 'Reels', vertical: true, zones: [[0, 0, 100, 13], [0, 80, 100, 20], [85, 50, 15, 30]] },
+  { id: 'shorts', label: 'Shorts', vertical: true, zones: [[0, 0, 100, 8], [0, 80, 100, 20], [86, 45, 14, 40]] },
+];
+
 /** Video encoders need even dimensions; keep custom sizes in range and even. */
 export const evenClamp = v => {
   const n = Math.round(Number(v) || 0);

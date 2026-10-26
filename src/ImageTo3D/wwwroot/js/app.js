@@ -17,7 +17,7 @@ import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { ENVIRONMENTS } from './environments.js';
 import { exportVideo, exportPngSequence, exportAvi, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
 import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
-import { SIZES, sizeOf, evenClamp, migrateSettings } from './formats.js';
+import { SIZES, GUIDES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host, localizeKeys } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
 import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
@@ -207,18 +207,95 @@ function disposeSource() {
   if (source.thumbUrl) URL.revokeObjectURL(source.thumbUrl);
 }
 
-/** Whether the animation in use spins the logo in its own plane, in any of its parts. */
-function activeRound() {
-  if (state.mode === 'keys') return (state.keys?.points || []).some(p => Math.abs(p?.rz || 0) >= 20);
-  if (isSequence()) { const p = sequenceParts(state); return !!(p.intro?.round || p.loop?.round || p.outro?.round); }
-  return !!getAnimation(state.anim).round;
-}
+/**
+ * Frames the whole animation, not just the logo at rest: the clip is posed at 48 instants (with
+ * the camera move of each) and the camera backs off just enough for every pose to stay inside
+ * 92 % of the frame — never closer than the framing at rest. Shader effects (waves, dissolve)
+ * can reach a little past the pieces' boxes: that is the margin. A keyframed camera is left out
+ * on purpose: its zoom is meant, and it is relative to this framing («Capturar encuadre»). So
+ * is an intro but its settling end, and an outro but its start: they come from and go out of the
+ * frame on purpose (a meteor from afar). The camera never backs off more than FRAME_MAX_BACK.
+ */
+let userMovedCamera = false;
+const FRAME_SAMPLES = 48, FRAME_FILL = 0.92, FRAME_MAX_BACK = 1.8;
 
-/** Frames the logo, leaving room for animations that spin it in its own plane. */
-let framedRound = false;
+/** Whether instant t of the clip belongs to the framing (not an entrance or exit off-frame). */
+function framedInstant(t) {
+  const tl = currentTimeline();
+  if (tl?.kind === 'keys') return true;
+  if (tl) {
+    if (tl.introSecs > 0 && t < tl.introSecs) return t / tl.introSecs >= 0.8;
+    const o = t - tl.introSecs - tl.mid;
+    return !(tl.outroSecs > 0 && o > 0) || o / tl.outroSecs <= 0.2;
+  }
+  const anim = getAnimation(state.anim);
+  return anim.kind !== 'intro' || t * state.speed / anim.duration >= 0.8;
+}
 function frameCamera() {
-  framedRound = activeRound();
-  stage.frame(framedRound);
+  userMovedCamera = false;
+  stage.frame(false);
+  if (!logo?.children.length) return;
+  const cam = stage.camera, target = stage.controls.target.clone();
+  const dir = cam.position.clone().sub(target).normalize(), d0 = cam.position.distanceTo(target);
+  // Every instant's pose, once: the corners of each visible piece's box, in world space.
+  const clip = clipSeconds(), samples = [], c = new THREE.Vector3();
+  for (let k = 0; k < FRAME_SAMPLES; k++) {
+    const t = clip * k / FRAME_SAMPLES;
+    if (!framedInstant(t)) continue;
+    posePreview(t);
+    stage.root.updateMatrixWorld(true);
+    const pts = [];
+    for (const piece of logo.children) {
+      if (!piece.visible) continue;
+      const g = piece.geometry, b = g.boundingBox || (g.computeBoundingBox(), g.boundingBox);
+      for (let n = 0; n < 8; n++) {
+        c.set(n & 1 ? b.max.x : b.min.x, n & 2 ? b.max.y : b.min.y, n & 4 ? b.max.z : b.min.z).applyMatrix4(piece.matrixWorld);
+        pts.push(c.x, c.y, c.z);
+      }
+    }
+    samples.push({ cycle: t / clip, pts });
+  }
+  const tanV = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2), tanH = tanV * cam.aspect;
+  let d = d0;
+  if (stage.cameraMove === 'none') {
+    // The camera keeps its orientation at any distance, so each point needs at least
+    // q·dir + |q·x| / (fill · tan(hfov/2)) (and the same vertically): no search needed.
+    const x = new THREE.Vector3(0, 1, 0).cross(dir).normalize(), y = dir.clone().cross(x);
+    for (const s of samples) {
+      for (let i = 0; i < s.pts.length; i += 3) {
+        c.set(s.pts[i] - target.x, s.pts[i + 1] - target.y, s.pts[i + 2] - target.z);
+        d = Math.max(d, c.dot(dir) + Math.max(Math.abs(c.dot(x)) / (FRAME_FILL * tanH), Math.abs(c.dot(y)) / (FRAME_FILL * tanV)));
+      }
+    }
+  } else {
+    // A camera move turns the camera with the distance: search it, on each instant's bounding box.
+    const boxes = samples.map(s => {
+      const b = new THREE.Box3();
+      for (let i = 0; i < s.pts.length; i += 3) b.expandByPoint(c.set(s.pts[i], s.pts[i + 1], s.pts[i + 2]));
+      return { cycle: s.cycle, corners: [0, 1, 2, 3, 4, 5, 6, 7].map(n => new THREE.Vector3(n & 1 ? b.max.x : b.min.x, n & 2 ? b.max.y : b.min.y, n & 4 ? b.max.z : b.min.z)) };
+    });
+    const fov = cam.fov;
+    const fits = dist => boxes.every(s => {
+      cam.position.copy(target).addScaledVector(dir, dist);
+      cam.lookAt(target);
+      stage.applyCameraMove(s.cycle);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const ok = s.corners.every(p => { const v = c.copy(p).project(cam); return v.z >= 1 || (Math.abs(v.x) <= FRAME_FILL && Math.abs(v.y) <= FRAME_FILL); });
+      if (cam.fov !== fov) { cam.fov = fov; cam.updateProjectionMatrix(); }
+      return ok;
+    });
+    if (!fits(d0)) {
+      let lo = d0, hi = d0 * 1.6;
+      while (!fits(hi) && hi < d0 * 12) { lo = hi; hi *= 1.6; }
+      for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+      d = hi;
+    }
+  }
+  cam.position.copy(target).addScaledVector(dir, Math.min(d, d0 * FRAME_MAX_BACK));
+  cam.lookAt(target);
+  stage.controls.update();
+  posePreview();
 }
 
 // Dragging a slider fires many changes; only one retrace runs at a time and, while it
@@ -641,6 +718,45 @@ function syncPlaybar() {
   }
 }
 
+// ───────── composition guides ─────────
+// Only over the viewport (an SVG), never in what is rendered. G or the button cycles through
+// them; the TikTok / Reels / Shorts interface zones are offered for vertical formats.
+let guide = 'none';
+function availableGuides() {
+  const [w, h] = sizeOf(state);
+  return GUIDES.filter(g => !g.vertical || w / h < 0.75);
+}
+
+function cycleGuides() {
+  const list = availableGuides(), i = list.findIndex(g => g.id === guide);
+  guide = list[(i + 1) % list.length].id;
+  drawGuides();
+}
+
+function drawGuides() {
+  const g = availableGuides().find(x => x.id === guide) || GUIDES[0];
+  guide = g.id;
+  const svg = $('#guides'), btn = $('#pb-guides');
+  btn.textContent = g.id === 'none' ? 'Guías' : `Guías: ${g.label}`;
+  btn.classList.toggle('on', g.id !== 'none');
+  // An <svg> has no 'hidden' property (HTML elements do): the attribute it is.
+  svg.toggleAttribute('hidden', g.id === 'none');
+  if (g.id === 'none') return;
+  const ns = 'http://www.w3.org/2000/svg', el = (tag, attrs) => {
+    const n = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    return n;
+  };
+  const parts = [
+    // Thirds, the action-safe (90 %) and title-safe (80 %) areas.
+    ...[100 / 3, 200 / 3].flatMap(p => [el('line', { x1: p, y1: 0, x2: p, y2: 100 }), el('line', { x1: 0, y1: p, x2: 100, y2: p })]),
+    el('rect', { class: 'safe', x: 5, y: 5, width: 90, height: 90 }),
+    el('rect', { class: 'safe title', x: 10, y: 10, width: 80, height: 80 }),
+    ...(g.zones || []).map(([x, y, w, h]) => el('rect', { class: 'zone', x, y, width: w, height: h })),
+  ];
+  svg.replaceChildren(...parts);
+}
+
 function initPlaybar() {
   const track = $('#pb-track');
   $('#pb-play').onclick = () => setPlaying(!play.playing);
@@ -659,6 +775,8 @@ function initPlaybar() {
     if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); setPlaying(false); play.t = e.key === 'Home' ? 0 : (frameCount() - 1) / fpsNow(); }
   });
   setPlaying(true);
+  $('#pb-guides').onclick = cycleGuides;
+  drawGuides();
 }
 
 // ───────── layout: letterboxed viewport in the export aspect ─────────
@@ -673,6 +791,7 @@ function layoutViewport() {
   const vp = $('#viewport');
   vp.style.width = w + 'px'; vp.style.height = h + 'px';
   $('#playbar').style.width = Math.min(availW, Math.max(w, 420)) + 'px';
+  drawGuides();   // the vertical-video zones come and go with the format
   stage.setSize(w, h);
 }
 new ResizeObserver(layoutViewport).observe($('#stage'));
@@ -1079,6 +1198,7 @@ function initShortcuts() {
     if (playbackKeysFor(e)) {
       // Space plays / pauses even with a button focused (that button is not pressed).
       if (e.key === ' ') { e.preventDefault(); if (!e.repeat) setPlaying(!play.playing); return; }
+      if (e.key === 'g' || e.key === 'G') { e.preventDefault(); cycleGuides(); return; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         stepFrames((e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1));
@@ -1344,12 +1464,12 @@ function renderAnimationList() {
  * framing, so at the key's instant the clip shows exactly what was captured.
  */
 function captureCamera() {
-  const rad = THREE.MathUtils.radToDeg, target = stage.controls.target;
-  const now = new THREE.Spherical().setFromVector3(stage.camera.position.clone().sub(target));
-  const base = new THREE.Spherical().setFromVector3(stage.framePosition(activeRound()));
+  const rad = THREE.MathUtils.radToDeg;
+  const now = new THREE.Spherical().setFromVector3(stage.camera.position.clone().sub(stage.controls.target));
+  frameCamera();
+  const base = new THREE.Spherical().setFromVector3(stage.camera.position.clone().sub(stage.controls.target));
   const wrap = a => ((a + 180) % 360 + 360) % 360 - 180;
   const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)) * 100) / 100;
-  frameCamera();
   return {
     zoom: clamp(base.radius / Math.max(0.01, now.radius), 0.4, 3),
     orbit: clamp(wrap(rad(now.theta - base.theta)), -180, 180),
@@ -1375,8 +1495,8 @@ function useSequence() {
 
 function onAnimationChanged() {
   play.t = 0;
-  // Spinning in its own plane (in any part of a sequence) needs the wider framing.
-  if (logo && activeRound() && !framedRound) frameCamera();
+  // The new animation is framed whole, unless the user has placed the camera by hand.
+  if (logo && !userMovedCamera) frameCamera();
   updateFloorForAnim();
   syncModeMarks();
   syncDurationUI();
@@ -1462,6 +1582,7 @@ function applyPreset(p) {
   play.t = 0;
   applySceneToEngine();
   syncSceneUI();
+  if (logo && !userMovedCamera) frameCamera();
   save();
 }
 
@@ -1995,6 +2116,7 @@ function init() {
   $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
   initLightPad();
   initPlaybar();
+  stage.controls.addEventListener('start', () => { userMovedCamera = true; });
   syncDurationUI();
 
   const fileInput = $('#file');

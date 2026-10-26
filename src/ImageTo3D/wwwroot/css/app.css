@@ -501,4 +501,10 @@ input[type=color] {
 .tune summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 8px 0; }
 .tune.changed summary { color: var(--accent); }
 .tune[open] { padding-bottom: 10px; }
+.guides { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.guides line, .guides .safe { stroke: rgba(255,255,255,.55); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
+.guides .safe.title { stroke-dasharray: 4 4; }
+.guides .zone { fill: rgba(255, 60, 90, .22); stroke: rgba(255, 60, 90, .7); stroke-width: 1; vector-effect: non-scaling-stroke; }
+#pb-guides { flex: none; }
+#pb-guides.on { color: var(--accent); border-color: var(--accent); }
 .pb-time { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
