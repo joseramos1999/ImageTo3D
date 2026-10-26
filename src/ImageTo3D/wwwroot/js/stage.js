@@ -10,6 +10,8 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
 import { Effects } from './effects.js';
 
 const TAU = Math.PI * 2;
+/** A fixed pseudo-random 0..1 per index: the same scene renders the same in every session. */
+const hash = n => { const s = Math.sin(n * 91.345 + 47.853) * 43758.5453; return s - Math.floor(s); };
 
 export const LIGHTING = [
   { id: 'studio', label: 'Estudio' },
@@ -75,7 +77,12 @@ function gradientCanvas(spec, w = 1024, h = 1024) {
   ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
   // A touch of noise stops 8-bit banding in smooth gradients (very visible in video).
   const img = ctx.getImageData(0, 0, w, h), d = img.data;
-  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 3; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  let seed = 12345;
+  for (let i = 0; i < d.length; i += 4) {
+    seed = (seed * 16807) % 2147483647;
+    const n = (seed / 2147483647 - 0.5) * 3;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
   ctx.putImageData(img, 0, 0);
   return c;
 }
@@ -545,10 +552,11 @@ export class Stage {
     const pos = new Float32Array(n * 3);
     const seeds = new Float32Array(n * 4);
     for (let i = 0; i < n; i++) {
-      seeds[i * 4] = (Math.random() - 0.5) * 18;
-      seeds[i * 4 + 1] = (Math.random() - 0.4) * 10;
-      seeds[i * 4 + 2] = (Math.random() - 0.7) * 12;
-      seeds[i * 4 + 3] = Math.random();
+      // Fixed per particle: more density adds particles, it doesn't reshuffle the others.
+      seeds[i * 4] = (hash(i * 4 + 1) - 0.5) * 18;
+      seeds[i * 4 + 1] = (hash(i * 4 + 2) - 0.4) * 10;
+      seeds[i * 4 + 2] = (hash(i * 4 + 3) - 0.7) * 12;
+      seeds[i * 4 + 3] = hash(i * 4 + 4);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));

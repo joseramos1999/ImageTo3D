@@ -44,6 +44,7 @@ async function runSmoke({ window, dir, waitFor, consoleErrors }) {
     await new Promise(r => setTimeout(r, 500));
     return { hud: document.querySelector('#hud').textContent, pieces: window.__app.logo.children.length };`);
   check('SVG vectorial', /vectorial/.test(svg.hud) && svg.pieces === 3, svg.hud);
+  check('Título de la ventana', window.getTitle() === 'prueba.svg — ImageTo3D', window.getTitle());
 
   // Exports: each one through the real export button, to the smoke folder, then checked on disk.
   const exportAs = async (format, setup = '') => {

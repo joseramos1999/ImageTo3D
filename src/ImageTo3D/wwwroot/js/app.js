@@ -100,6 +100,7 @@ async function loadSource(bitmap, { name, blob, thumbUrl = null, mask = DEFAULT_
     rebuildMeshes();
     frameCamera();
     setThumb(thumbUrl);
+    syncTitle();
     updateHud(performance.now() - t0);
     onSourceChanged();
     if (!r.outlines.length) toast(NO_SHAPE_MSG, 'error');
@@ -205,9 +206,18 @@ function disposeSource() {
   if (source.thumbUrl) URL.revokeObjectURL(source.thumbUrl);
 }
 
+/** Whether the animation in use spins the logo in its own plane, in any of its parts. */
+function activeRound() {
+  if (state.mode === 'keys') return (state.keys?.points || []).some(p => Math.abs(p?.rz || 0) >= 20);
+  if (isSequence()) { const p = sequenceParts(state); return !!(p.intro?.round || p.loop?.round || p.outro?.round); }
+  return !!getAnimation(state.anim).round;
+}
+
 /** Frames the logo, leaving room for animations that spin it in its own plane. */
+let framedRound = false;
 function frameCamera() {
-  stage.frame(!!getAnimation(state.anim).round);
+  framedRound = activeRound();
+  stage.frame(framedRound);
 }
 
 // Dragging a slider fires many changes; only one retrace runs at a time and, while it
@@ -499,6 +509,11 @@ function setThumb(url) {
   drop.replaceChildren(img, small);
 }
 
+/** The window's title names the work, like any document app (the desktop hosts set it). */
+function syncTitle() {
+  host.post({ type: 'title', text: source ? `${source.name.slice(0, 120)} — ImageTo3D` : 'ImageTo3D' });
+}
+
 function updateHud(ms) {
   if (!logo) return;
   let tris = 0;
@@ -519,11 +534,22 @@ function tick(now) {
   animClock += dt * state.speed;
   camClock += dt;
   stage.controls.update();
-  // A chained clip (intro → loop → outro) previews exactly what will be exported, on the camera's clock.
+  stage.render(posePreview(false));
+}
+
+/**
+ * Poses the logo at the preview's current instant and returns the camera / particle phase.
+ * A chained clip (sequence, keyframes) runs on the camera's clock, exactly as it exports;
+ * `still` holds a single intro on its last pose (a PNG) instead of replaying it.
+ */
+function posePreview(still) {
   const tl = currentTimeline(), clip = clipSeconds();
   if (tl) tl.pose(camClock % clip, stage.motion, logo.children);
-  else poseAt(getAnimation(state.anim), animClock, stage.motion, logo.children, false);
-  stage.render((camClock % clip) / clip);
+  else {
+    const anim = getAnimation(state.anim);
+    poseAt(anim, still && anim.kind === 'intro' ? anim.duration : animClock, stage.motion, logo.children, still);
+  }
+  return (camClock % clip) / clip;
 }
 
 // ───────── layout: letterboxed viewport in the export aspect ─────────
@@ -601,10 +627,8 @@ async function runExport(out = null) {
       if (fmt === 'png') {
         const r = await exportPNG({
           canvas, width: w, height: h,
-          renderFrame: () => {
-            poseAt(anim, anim.kind === 'intro' ? anim.duration : animClock, stage.motion, logo.children, true);
-            stage.render((camClock % seconds) / seconds);
-          },
+          // What the preview shows right now: the sequence or keyframes with their camera and light.
+          renderFrame: () => stage.render(posePreview(true)),
         });
         await deliver(r.blob, r.filename);
         return 'ok';
@@ -1114,7 +1138,6 @@ function renderAnimationList() {
   chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
     state.mode = 'single';   // picking a single animation leaves the sequence
     onAnimationChanged();
-    if (a.round) stage.frame(true);
   }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
 }
 
@@ -1137,6 +1160,8 @@ function useSequence() {
 function onAnimationChanged() {
   animClock = 0;
   camClock = 0;
+  // Spinning in its own plane (in any part of a sequence) needs the wider framing.
+  if (logo && activeRound() && !framedRound) frameCamera();
   updateFloorForAnim();
   syncModeMarks();
   syncDurationUI();
