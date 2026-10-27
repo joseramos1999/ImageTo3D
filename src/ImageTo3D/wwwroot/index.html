@@ -265,6 +265,16 @@
             <div class="seg" id="fps"><button data-v="30">30</button><button data-v="60">60</button></div>
           </div>
           <div class="slider" data-key="seconds" data-label="Duración" data-min="2" data-max="20" data-step="1" data-fmt="s"></div>
+          <div class="row">
+            <label for="motion-blur">Desenfoque de movimiento <span class="hint-inline">al exportar</span></label>
+            <select class="select" id="motion-blur" title="Como el obturador de una cámara: los giros y movimientos rápidos dejan estela en vez de saltar de un fotograma a otro">
+              <option value="0">No</option><option value="90">Suave (90°)</option><option value="180">Cine (180°)</option><option value="360">Fuerte (360°)</option>
+            </select>
+          </div>
+          <div class="row" id="blur-samples-row">
+            <label>Muestras <span class="hint-inline">más = más suave y más lento</span></label>
+            <div class="seg" id="blur-samples" role="group" aria-label="Muestras del desenfoque"><button data-v="4">4</button><button data-v="8">8</button><button data-v="16">16</button></div>
+          </div>
           <p class="note" id="loop-note"></p>
           <p class="note" id="export-estimate"></p>
         </div>

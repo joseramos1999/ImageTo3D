@@ -5,6 +5,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { Effects } from './effects.js';
 import { environmentScene, disposeEnvironmentScene } from './environments.js';
@@ -256,7 +257,8 @@ export class Stage {
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     const rt = new THREE.WebGLRenderTarget(size.x || 1, size.y || 1, { type: THREE.HalfFloatType, samples: 4 });
     const composer = new EffectComposer(this.renderer, rt);
-    composer.addPass(new RenderPass(this.scene, this.camera));
+    this.renderPass = new RenderPass(this.scene, this.camera);
+    composer.addPass(this.renderPass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x || 1, size.y || 1), 0, 0.45, 0.85);
     this.bloom.enabled = false;
     composer.addPass(this.bloom);
@@ -684,13 +686,22 @@ export class Stage {
    * The camera move is applied on top of the user's orbit and undone afterwards.
    */
   render(cycle = 0, { transparent = false } = {}) {
+    const undo = this.prepareFrame(cycle);
+    this.withBackdrop(transparent || this.transparent, () => this.composer.render());
+    undo();
+  }
+
+  /**
+   * Sets up instant `cycle` (0..1 of the clip) over the posed logo: effects, particles, the shine
+   * band, the camera move and keyframed camera, the turning reflections. Returns the undo
+   * for what belongs to the user's view (camera, environment rotation).
+   */
+  prepareFrame(cycle) {
     this.fx.update();
     this.updateParticles(cycle);
     this.updateShine(cycle);
-    const cam = this.camera, target = this.controls.target;
-    const savedPos = cam.position.clone(), savedQuat = cam.quaternion.clone();
-
-    const savedFov = cam.fov;
+    const cam = this.camera;
+    const savedPos = cam.position.clone(), savedQuat = cam.quaternion.clone(), savedFov = cam.fov;
     if (this.cameraMove !== 'none') this.applyCameraMove(cycle);
     if (this.fx.cameraWanted) this.applyCameraKeys(this.fx.cameraWanted);
     // «Reflejos en movimiento»: the environment turns once per clip (the lights stay put), so
@@ -698,29 +709,101 @@ export class Stage {
     const envRot = this.scene.environmentRotation, envY = envRot.y;
     if (this.envSpin) envRot.y = envY + TAU * cycle;
     this.scene.backgroundRotation.copy(envRot);
+    return () => {
+      envRot.y = envY;
+      cam.position.copy(savedPos);
+      cam.quaternion.copy(savedQuat);
+      if (cam.fov !== savedFov) { cam.fov = savedFov; cam.updateProjectionMatrix(); }
+    };
+  }
 
-    if (transparent || this.transparent) {
-      // With alpha: the scene clears to nothing and keeps its alpha through the composer, so the
-      // bloom's halo survives as semi-transparent light (unless «Halo en la transparencia» is off).
-      // Of the floor only its shadow survives (a mirror or grid floating in nothing looks wrong).
-      const bg = this.scene.background, bloomOn = this.bloom.enabled;
-      const hidden = this.floorGroup.children.filter(o => o.visible && !o.material?.isShadowMaterial);
-      hidden.forEach(o => { o.visible = false; });
-      this.scene.background = null;
-      this.renderer.setClearColor(0x000000, 0);
-      if (!this.bloomInAlpha) this.bloom.enabled = false;
-      this.composer.render();
+  /**
+   * Runs draw() over the frame's backdrop. With alpha: the scene clears to nothing and keeps its
+   * alpha through the composer, so the bloom's halo survives as semi-transparent light (unless
+   * «Halo en la transparencia» is off). Of the floor only its shadow survives (a mirror or grid
+   * floating in nothing looks wrong).
+   */
+  withBackdrop(alpha, draw) {
+    if (!alpha) { draw(); return; }
+    const bg = this.scene.background, bloomOn = this.bloom.enabled;
+    const hidden = this.floorGroup.children.filter(o => o.visible && !o.material?.isShadowMaterial);
+    hidden.forEach(o => { o.visible = false; });
+    this.scene.background = null;
+    this.renderer.setClearColor(0x000000, 0);
+    if (!this.bloomInAlpha) this.bloom.enabled = false;
+    try { draw(); } finally {
       this.bloom.enabled = bloomOn;
       this.scene.background = bg;
       hidden.forEach(o => { o.visible = true; });
-    } else {
-      this.composer.render();
     }
+  }
 
-    envRot.y = envY;
-    cam.position.copy(savedPos);
-    cam.quaternion.copy(savedQuat);
-    if (cam.fov !== savedFov) { cam.fov = savedFov; cam.updateProjectionMatrix(); }
+  /**
+   * Motion blur, as a camera's shutter does it: one frame is the average of samples.length
+   * renders, each with the logo posed at its own instant (pose(k)) and set up at cycles[k]. The
+   * scene renders are averaged in a half-float target (premultiplied colour and alpha, so it
+   * also works over a transparent background), then the bloom and the output run once on the
+   * average. Deterministic like everything else: the instants are fixed by the frame's time.
+   */
+  renderBlurred(cycles, pose, { transparent = false } = {}) {
+    const read = this.composer.readBuffer, w = read.width, h = read.height;
+    if (!this.blur || this.blur.w !== w || this.blur.h !== h || this.blur.samples !== read.samples) {
+      this.disposeBlur();
+      const opts = { type: THREE.HalfFloatType };
+      this.blur = {
+        w, h, samples: read.samples,
+        scene: new THREE.WebGLRenderTarget(w, h, { ...opts, samples: read.samples }),
+        sum: new THREE.WebGLRenderTarget(w, h, opts),
+        add: new FullScreenQuad(new THREE.ShaderMaterial({
+          uniforms: { tDiffuse: { value: null }, weight: { value: 1 } },
+          vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+          fragmentShader: 'uniform sampler2D tDiffuse; uniform float weight; varying vec2 vUv; void main() { gl_FragColor = texture2D(tDiffuse, vUv) * weight; }',
+          blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+          blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor, depthTest: false, depthWrite: false, transparent: true,
+        })),
+        copy: new FullScreenQuad(new THREE.ShaderMaterial({
+          uniforms: { tDiffuse: { value: null } },
+          vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+          fragmentShader: 'uniform sampler2D tDiffuse; varying vec2 vUv; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }',
+          blending: THREE.NoBlending, depthTest: false, depthWrite: false,
+        })),
+      };
+    }
+    const b = this.blur, r = this.renderer, n = cycles.length;
+    const prevTarget = r.getRenderTarget(), autoClear = r.autoClear;
+    this.withBackdrop(transparent || this.transparent, () => {
+      for (let k = 0; k < n; k++) {
+        pose(k);
+        const undo = this.prepareFrame(cycles[k]);
+        r.autoClear = true;
+        r.setRenderTarget(b.scene);
+        r.clear();
+        r.render(this.scene, this.camera);
+        undo();
+        r.autoClear = false;
+        r.setRenderTarget(b.sum);
+        if (k === 0) { r.setClearColor(0x000000, 0); r.clear(); }
+        b.add.material.uniforms.tDiffuse.value = b.scene.texture;
+        b.add.material.uniforms.weight.value = 1 / n;
+        b.add.render(r);
+      }
+      // The average takes the place of the composer's own scene render: bloom and output follow.
+      r.setRenderTarget(read);
+      b.copy.material.uniforms.tDiffuse.value = b.sum.texture;
+      b.copy.render(r);
+      r.autoClear = autoClear;
+      this.renderPass.enabled = false;
+      try { this.composer.render(); } finally { this.renderPass.enabled = true; }
+    });
+    r.autoClear = autoClear;
+    r.setRenderTarget(prevTarget);
+  }
+
+  disposeBlur() {
+    if (!this.blur) return;
+    for (const t of [this.blur.scene, this.blur.sum]) t.dispose();
+    for (const q of [this.blur.add, this.blur.copy]) { q.material.dispose(); q.dispose(); }
+    this.blur = null;
   }
 
   /** Keyframed camera (keys.js): closer / farther, around and up or down, on top of the rest. */

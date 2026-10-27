@@ -68,7 +68,8 @@ async function runSmoke({ window, dir, waitFor, consoleErrors }) {
     ['Vídeo MP4 (H.264)', 'mp4', ''],
     ['Vídeo WebM con transparencia', 'webm', "document.querySelector('#backgrounds [data-id=transparent]').click();"],
     ['Vídeo MOV (PNG + alfa)', 'mov', "document.querySelector('#backgrounds [data-id=transparent]').click();"],
-    ['Imagen PNG', 'png', ''],
+    ['Vídeo MP4 con desenfoque de movimiento', 'mp4', "document.querySelector('#backgrounds [data-id=vignette]').click(); const mb = document.querySelector('#motion-blur'); mb.value = '180'; mb.dispatchEvent(new Event('change')); document.querySelector('#blur-samples [data-v=\"4\"]').click();"],
+    ['Imagen PNG', 'png', "const mb = document.querySelector('#motion-blur'); mb.value = '0'; mb.dispatchEvent(new Event('change'));"],
     ['Modelo STL', 'stl', ''],
   ]) {
     try {

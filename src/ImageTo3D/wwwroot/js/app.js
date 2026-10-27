@@ -43,6 +43,7 @@ const DEFAULTS = {
   bloom: 0, bloomTh: 0.85, bloomRadius: 0.35, bloomAlpha: true, particles: false, density: 1,
   lightAz: 0, lightEl: 0, shine: false, shineGain: 1,
   format: 'mp4', aviCodec: 'mjpg', size: 'yt', customW: 1920, customH: 1080, fps: '30', seconds: 6, stlWidth: 100,
+  motionBlur: '0', blurSamples: '8',
   printBase: 'none', printMargin: 3, printBaseThick: 2, printOrient: 'flat', printMinWall: 0.8,
   glbAnim: true, glbCamera: true,
 };
@@ -875,15 +876,22 @@ async function runExport(out = null) {
 
       const fit = fitLoop(anim, seconds, state.speed);
       const tl = currentTimeline();
+      const blur = motionBlur();
+      // A seamless loop wraps round its ends (its last frame flows into the first); a clip with
+      // a start and an end holds at them.
+      const loops = tl ? tl.kind === 'keys' && tl.keys.loop : anim.kind === 'loop';
+      const edge = tt => (loops ? ((tt % seconds) + seconds) % seconds : Math.max(0, Math.min(seconds, tt)));
       cancelExport = false;
-      if (!out) showProgress(`Renderizando ${ANIMATED[kind]}${stage.transparent && !NO_ALPHA.has(kind) ? ' con transparencia' : ''} · ${w}×${h} · ${fps} fps…`);
+      if (!out) showProgress(`Renderizando ${ANIMATED[kind]}${stage.transparent && !NO_ALPHA.has(kind) ? ' con transparencia' : ''}${blur ? ` y desenfoque de movimiento (${blur.n} muestras)` : ''} · ${w}×${h} · ${fps} fps…`);
       const started = performance.now();
       const job = {
         canvas, renderer: stage.renderer, kind: fmt, codec: state.aviCodec, alpha: stage.transparent, width: w, height: h, fps, seconds, sink,
         renderFrame: (i, t) => {
-          if (tl) tl.pose(t, stage.motion, logo.children);
-          else poseAt(anim, t * fit.speed, stage.motion, logo.children, true);
-          stage.render(t / seconds);
+          const poseTo = tt => (tl ? tl.pose(tt, stage.motion, logo.children) : poseAt(anim, tt * fit.speed, stage.motion, logo.children, true));
+          if (!blur) { poseTo(t); stage.render(t / seconds); return; }
+          // Motion blur: the shutter stays open blur.angle° of the frame, centred on its instant.
+          const times = Array.from({ length: blur.n }, (_, k) => edge(t + ((k + 0.5) / blur.n - 0.5) * blur.angle / 360 / fps));
+          stage.renderBlurred(times.map(tt => tt / seconds), k => poseTo(times[k]));
         },
         onProgress: p => (out?.onProgress ? out.onProgress(p) : setProgress(p, started)),
         isCancelled: () => cancelExport,
@@ -891,7 +899,8 @@ async function runExport(out = null) {
       try {
         const r = fmt === 'pngseq' ? await exportPngSequence(job) : fmt === 'avi' ? await exportAvi(job) : fmt === 'mov' ? await exportMov(job) : await exportVideo(job);
         if (!r) { await sink?.abort(); if (!out) toast('Exportación cancelada'); return 'cancelled'; }
-        rememberRenderRate(kind, w * h * seconds * fps, performance.now() - started);
+        // The rate is remembered per plain frame, so the estimate scales it by the blur's samples.
+        rememberRenderRate(kind, w * h * seconds * fps * (blur ? blur.n * 0.8 : 1), performance.now() - started);
         updateExportEstimate();
         // Streamed files are announced by the host ("saved", with "Mostrar en carpeta").
         if (r.blob) await deliver(r.blob, animationFileName(kind, w, h));
@@ -911,6 +920,12 @@ async function runExport(out = null) {
     toast('Error al exportar: ' + (e.message || e), 'error');
     return 'error';
   }
+}
+
+/** The export's motion blur: { angle (shutter, degrees), n (renders per frame) }, or null. */
+function motionBlur() {
+  const angle = Number(state.motionBlur) || 0;
+  return angle > 0 ? { angle, n: Math.max(2, Number(state.blurSamples) || 8) } : null;
 }
 
 function showProgress(title) { $('#progress-title').textContent = title; setProgress(0); $('#progress').hidden = false; }
@@ -958,7 +973,9 @@ async function updateExportEstimate() {
   const [w, h] = exportDims(), fps = Number(state.fps), frames = Math.round(seconds * fps);
   const parts = [`≈ ${formatBytes(estimateBytes(kind, w, h, fps, seconds, stage.transparent))}`, `${frames} fotogramas`];
   const rate = Number(localStorage.getItem(RATE_KEY + kind));
-  if (rate > 0) parts.push(`unos ${formatDuration(w * h * frames / rate)} de render`);
+  const blur = motionBlur();
+  if (rate > 0) parts.push(`unos ${formatDuration(w * h * frames / rate * (blur ? blur.n * 0.8 : 1))} de render`);
+  if (blur) parts.push(`desenfoque: ${blur.n} renders por fotograma`);
   el.textContent = parts.join(' · ');
   el.classList.remove('warn');
   const support = await checkVideoSupport(stage.renderer, kind, w, h, fps);
@@ -1070,6 +1087,7 @@ function applySettings(s) {
   syncSceneUI();
   segSyncs.forEach(fn => fn());
   syncSizeUI();
+  syncBlurUI();
   syncExportOpts();
   if (String(sizeOf(prev)) !== String(sizeOf(state))) layoutViewport();
   if (logo && (prev.depth !== state.depth || prev.bevel !== state.bevel)) rebuildMeshes();
@@ -2211,6 +2229,11 @@ function syncSizeUI() {
   $('#custom-h').value = evenClamp(state.customH);
 }
 
+function syncBlurUI() {
+  $('#motion-blur').value = state.motionBlur;
+  $('#blur-samples-row').hidden = !motionBlur();
+}
+
 function syncExportOpts() {
   document.querySelectorAll('.export-opts').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(state.format); });
   const label = {
@@ -2320,6 +2343,10 @@ function init() {
   initSize();
   segmented('#fps', 'fps', updateExportEstimate);
   segmented('#avi-codec', 'aviCodec', updateExportEstimate);
+  segmented('#blur-samples', 'blurSamples', updateExportEstimate);
+  $('#motion-blur').value = state.motionBlur;
+  $('#motion-blur').addEventListener('change', e => { state.motionBlur = e.target.value; syncBlurUI(); updateExportEstimate(); save(); });
+  syncBlurUI();
   segmented('#print-base', 'printBase', updatePrint);
   for (const [id, key] of [['#glb-anim', 'glbAnim'], ['#glb-camera', 'glbCamera']]) {
     $(id).checked = !!state[key];
