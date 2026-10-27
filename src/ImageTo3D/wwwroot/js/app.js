@@ -15,7 +15,7 @@ import { initUpdates } from './update-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
 import { Stage, LIGHTING, FLOORS, CAMERA_MOVES, BACKGROUNDS } from './stage.js';
 import { ENVIRONMENTS } from './environments.js';
-import { exportVideo, exportPngSequence, exportAvi, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
+import { exportVideo, exportPngSequence, exportAvi, exportMov, exportPNG, exportGLB, exportSTL, download, checkVideoSupport, estimateBytes, animationFileName } from './exporter.js';
 import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
 import { SIZES, GUIDES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host, localizeKeys } from './host.js';
@@ -803,7 +803,7 @@ function exportDims() {
 }
 
 // Animated outputs share one path: video (MP4 / WebM) or a PNG sequence in a ZIP.
-const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', avi: 'vídeo AVI', 'avi-rgba': 'AVI sin compresión', pngseq: 'secuencia PNG' };
+const ANIMATED = { mp4: 'vídeo MP4', webm: 'vídeo WebM', mov: 'vídeo MOV', avi: 'vídeo AVI', 'avi-rgba': 'AVI sin compresión', pngseq: 'secuencia PNG' };
 // Outputs without an alpha channel: a transparent background comes out black.
 const NO_ALPHA = new Set(['mp4', 'avi']);
 /** What will be written: the format, with AVI split by codec (Motion JPEG or RGB + alpha). */
@@ -881,7 +881,7 @@ async function runExport(out = null) {
         isCancelled: () => cancelExport,
       };
       try {
-        const r = fmt === 'pngseq' ? await exportPngSequence(job) : fmt === 'avi' ? await exportAvi(job) : await exportVideo(job);
+        const r = fmt === 'pngseq' ? await exportPngSequence(job) : fmt === 'avi' ? await exportAvi(job) : fmt === 'mov' ? await exportMov(job) : await exportVideo(job);
         if (!r) { await sink?.abort(); if (!out) toast('Exportación cancelada'); return 'cancelled'; }
         rememberRenderRate(kind, w * h * seconds * fps, performance.now() - started);
         updateExportEstimate();
@@ -926,6 +926,7 @@ function rememberRenderRate(kind, pixels, ms) {
 
 const FORMAT_NOTES = {
   webm: 'Con el fondo «Transparente» el vídeo lleva canal alfa: navegadores, OBS, DaVinci Resolve, Shotcut, Kdenlive.',
+  mov: 'QuickTime con fotogramas PNG: sin pérdidas y, con el fondo «Transparente», con canal alfa. Lo importan con la transparencia Final Cut Pro, Premiere, After Effects, DaVinci Resolve y Motion, en Mac y en Windows. Ocupa como la secuencia PNG.',
   pngseq: 'Una imagen PNG por fotograma, en un ZIP: transparencia sin pérdidas para Premiere, After Effects o DaVinci, y mucho más ligera que el AVI sin compresión.',
   avi: 'AVI con Motion JPEG: se abre en casi cualquier reproductor o editor, también en programas antiguos. Ocupa más que un MP4.',
   'avi-rgba': 'Sin compresión, RGB + alfa (32 bits): lo mismo que After Effects con el códec «Ninguno» y Canales «RGB + alfa». After Effects, Premiere y DaVinci lo importan con la transparencia (si After Effects pregunta, alfa «Directo»). Ocupa mucho: unos 8 MB por fotograma en 1080p.',
@@ -1631,7 +1632,7 @@ function applyPreset(p) {
 // files go straight into a folder picked once; in a browser they download one by one. The
 // user's own logo, settings and project come back at the end, untouched.
 const batch = { files: [], folder: null, running: false, cancel: false };
-const FORMAT_NAMES = { mp4: 'MP4', webm: 'WebM', avi: 'AVI', pngseq: 'secuencia PNG (ZIP)', png: 'PNG', glb: 'GLB', stl: 'STL' };
+const FORMAT_NAMES = { mp4: 'MP4', webm: 'WebM', mov: 'MOV', avi: 'AVI', pngseq: 'secuencia PNG (ZIP)', png: 'PNG', glb: 'GLB', stl: 'STL' };
 
 function openBatch() {
   if (exporting) return;
@@ -2031,7 +2032,7 @@ function syncSizeUI() {
 function syncExportOpts() {
   document.querySelectorAll('.export-opts').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(state.format); });
   const label = {
-    mp4: 'Exportar vídeo MP4', webm: 'Exportar vídeo WebM', avi: 'Exportar vídeo AVI', pngseq: 'Exportar secuencia PNG (ZIP)',
+    mp4: 'Exportar vídeo MP4', webm: 'Exportar vídeo WebM', mov: 'Exportar vídeo MOV', avi: 'Exportar vídeo AVI', pngseq: 'Exportar secuencia PNG (ZIP)',
     png: 'Exportar imagen PNG', glb: 'Exportar modelo GLB', stl: 'Exportar STL (impresión 3D)',
   };
   $('#btn-export').textContent = label[state.format];

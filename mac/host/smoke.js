@@ -6,6 +6,7 @@ const path = require('path');
 const MAGIC = {
   mp4: buf => buf.subarray(4, 8).toString('latin1') === 'ftyp',
   webm: buf => buf.readUInt32BE(0) === 0x1a45dfa3,
+  mov: buf => buf.subarray(4, 12).toString('latin1') === 'ftypqt  ' && buf.includes(Buffer.from('moov')),
   png: buf => buf.subarray(1, 4).toString('latin1') === 'PNG',
   stl: buf => buf.length > 84 && buf.readUInt32LE(80) * 50 + 84 === buf.length,
 };
@@ -66,6 +67,7 @@ async function runSmoke({ window, dir, waitFor, consoleErrors }) {
   for (const [name, format, setup] of [
     ['Vídeo MP4 (H.264)', 'mp4', ''],
     ['Vídeo WebM con transparencia', 'webm', "document.querySelector('#backgrounds [data-id=transparent]').click();"],
+    ['Vídeo MOV (PNG + alfa)', 'mov', "document.querySelector('#backgrounds [data-id=transparent]').click();"],
     ['Imagen PNG', 'png', ''],
     ['Modelo STL', 'stl', ''],
   ]) {

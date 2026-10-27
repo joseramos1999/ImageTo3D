@@ -6,6 +6,7 @@ import * as MP4 from '../vendor/mp4-muxer/mp4-muxer.mjs';
 import * as WEBM from '../vendor/webm-muxer/webm-muxer.mjs';
 import { ZipWriter } from './zip.js';
 import { AviWriter } from './avi.js';
+import { MovWriter } from './mov.js';
 
 export function download(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -58,7 +59,7 @@ export const videoBitrate = (width, height, fps) => Math.round(width * height * 
  *  A transparent WebM carries a second (alpha) stream; PNG frames of a logo on a clear
  *  background run around 0.6 bytes per pixel. */
 export function estimateBytes(kind, width, height, fps, seconds, alpha) {
-  if (kind === 'pngseq') return width * height * 0.6 * fps * seconds;
+  if (kind === 'pngseq' || kind === 'mov') return width * height * 0.6 * fps * seconds;
   if (kind === 'avi') return width * height * 0.06 * fps * seconds;   // JPEG at quality 0.92 (measured 0.035 on a dark plain background)
   if (kind === 'avi-rgba') return (width * height * 4 + 32) * fps * seconds;   // uncompressed: exact
   return videoBitrate(width, height, fps) * seconds / 8 * (alpha ? 1.35 : 1);
@@ -72,7 +73,7 @@ export async function checkVideoSupport(renderer, kind, width, height, fps) {
   if (Math.max(width, height) > maxRender) {
     return { ok: false, reason: `Tu tarjeta gráfica no puede renderizar a ${width}×${height} (máximo ${maxRender} px). Elige un tamaño menor.` };
   }
-  if (kind === 'pngseq' || kind.startsWith('avi')) return { ok: true };   // image encoders, no video codec needed
+  if (kind === 'pngseq' || kind === 'mov' || kind.startsWith('avi')) return { ok: true };   // image encoders, no video codec needed
   if (typeof VideoEncoder === 'undefined') return { ok: false, reason: 'Este sistema no soporta codificación de vídeo (WebCodecs).' };
   const key = `${kind}:${width}x${height}@${fps}`;
   if (!supportCache.has(key)) supportCache.set(key, pickCodec(kind, width, height, fps, videoBitrate(width, height, fps)));
@@ -331,7 +332,30 @@ export async function exportAvi({ canvas, renderer, codec = 'mjpg', width, heigh
   return { blob: sink ? null : new Blob(memory.parts, { type: 'video/x-msvideo' }), path: sink?.path ?? null };
 }
 
-const EXT = { mp4: 'mp4', webm: 'webm', avi: 'avi', 'avi-rgba': 'avi', pngseq: 'zip' };
+/**
+ * The animation as a QuickTime .mov of PNG frames (lossless, with alpha): the overlay format
+ * Final Cut, Premiere, After Effects and DaVinci import with transparency, on Mac and Windows.
+ */
+export async function exportMov({ canvas, width, height, fps, seconds, renderFrame, onProgress, isCancelled, sink = null }) {
+  const memory = sink ? null : memoryTarget();
+  const mov = new MovWriter(sink ? (pos, bytes) => sink.write(pos, bytes) : memory.write, { width, height, fps });
+  const total = Math.round(seconds * fps);
+  for (let i = 0; i < total; i++) {
+    if (isCancelled()) return null;
+    renderFrame(i, i / fps);
+    // The canvas is premultiplied; its PNG comes out with straight alpha, as QuickTime wants.
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    mov.addFrame(new Uint8Array(await blob.arrayBuffer()));
+    if (sink) await sink.drain(32 * 1024 * 1024);
+    onProgress((i + 1) / total);
+  }
+  mov.finish();
+  if (sink) await sink.close();
+  onProgress(1);
+  return { blob: sink ? null : new Blob(memory.parts, { type: 'video/quicktime' }), path: sink?.path ?? null };
+}
+
+const EXT = { mp4: 'mp4', webm: 'webm', avi: 'avi', 'avi-rgba': 'avi', pngseq: 'zip', mov: 'mov' };
 export const animationFileName = (kind, width, height) => `logo3d-${width}x${height}-${stamp()}.${EXT[kind]}`;
 
 export async function exportPNG({ canvas, renderFrame, width, height }) {

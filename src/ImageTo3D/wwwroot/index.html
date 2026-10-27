@@ -234,6 +234,7 @@
         <div class="seg format-grid" id="format" role="group" aria-label="Formato">
           <button data-v="mp4" title="Vídeo H.264, se reproduce en todas partes">MP4</button>
           <button data-v="webm" title="Vídeo VP9, con transparencia si el fondo es «Transparente»">WebM</button>
+          <button data-v="mov" title="QuickTime con fotogramas PNG: sin pérdidas y con transparencia, para Final Cut, Premiere, After Effects y DaVinci">MOV</button>
           <button data-v="avi" title="Vídeo AVI: Motion JPEG (compatible con casi todo) o sin compresión con transparencia (After Effects)">AVI</button>
           <button data-v="pngseq" title="Un PNG por fotograma en un ZIP, con transparencia">Secuencia PNG</button>
           <button data-v="png" title="Una imagen">PNG</button>
@@ -249,7 +250,7 @@
           </div>
         </div>
         <p class="note" id="format-note"></p>
-        <div class="export-opts" data-for="mp4 webm avi pngseq png">
+        <div class="export-opts" data-for="mp4 webm mov avi pngseq png">
           <label class="sub" for="size">Tamaño</label>
           <select id="size" class="select"></select>
           <div class="row custom-size" id="custom-size">
@@ -259,7 +260,7 @@
             <input type="number" id="custom-h" min="64" max="7680" step="2" aria-label="Alto en píxeles">
           </div>
         </div>
-        <div class="export-opts" data-for="mp4 webm avi pngseq">
+        <div class="export-opts" data-for="mp4 webm mov avi pngseq">
           <div class="row"><label>FPS</label>
             <div class="seg" id="fps"><button data-v="30">30</button><button data-v="60">60</button></div>
           </div>
