@@ -176,7 +176,7 @@ export function initMaskUI({ getSource, commit, isVector = () => false, openEdit
         ? `No se puede usar como vector: ${src.vectorNote}. Se traza como imagen.`
         : vectorOn
           ? `Formas y colores exactos del SVG${r.background ? ' (sin su rectángulo de fondo)' : ''}. El «Suavizado» de Geometría ajusta la precisión de las curvas.` +
-            (r.strokes ? ' Los trazos (stroke) no se convierten: pásalos a relleno en tu editor.' : '')
+            (r.strokes || r.texts ? ' Los trazos y los textos se dibujan con su grosor, sus remates y sus fuentes (las del sistema: una fuente web que el SVG solo nombra no se carga).' : '')
           : 'Se traza la imagen del SVG como si fuera un PNG.';
     }
 

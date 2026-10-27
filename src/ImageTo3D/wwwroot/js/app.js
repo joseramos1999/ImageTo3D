@@ -566,8 +566,9 @@ async function openFile(file) {
   startProject();
   if (usingVector()) {
     const layers = new Set(source.outlines.map(o => o.layer)).size;
+    const r = source.vector.parsed.report, extra = [r.strokes && `${r.strokes} trazo${r.strokes > 1 ? 's' : ''}`, r.texts && `${r.texts} texto${r.texts > 1 ? 's' : ''}`].filter(Boolean);
     toast(`«${file.name}» importado como vector: ${source.outlines.length} formas en ${layers} capa${layers > 1 ? 's' : ''}` +
-      (source.vector.parsed.report.strokes ? '. Los trazos (stroke) del SVG no se convierten: pásalos a relleno o usa «Trazar como imagen» en Recorte.' : ''));
+      (extra.length ? ` (con ${extra.join(' y ')}, dibujados con sus grosores y fuentes)` : ''));
     return;
   }
   if (source.vectorNote) { toast(`«${file.name}»: ${source.vectorNote}, así que se traza como imagen.`); return; }
