@@ -24,7 +24,7 @@ const COLOR = /^#[0-9a-f]{6}$/i;
 /** Every key a look carries and how it is checked: a set of ids, a [min, max] range, or a type. */
 const SPEC = {
   mode: new Set(['single', 'sequence', 'keys']),
-  anim: idsOf(ANIMATIONS),
+  anim: idsOf(ANIMATIONS.filter(a => a.kind !== 'outro')),   // a single animation is a loop or an intro
   speed: [0.1, 3],
   seqIntro: new Set([...animIds('intro'), 'none']),
   seqLoop: new Set([...animIds('loop'), 'none', 'still']),
@@ -127,13 +127,17 @@ export function sanitizeLook(set) {
 
 /** The current look, from the app's state. */
 export function lookFromState(state) {
-  return sanitizeLook(structuredClone(Object.fromEntries(LOOK_KEYS.filter(k => k in state).map(k => [k, state[k]]))));
+  // A look of a single animation leaves the user's sequence and keyframes alone (and the other way round).
+  const keys = LOOK_KEYS.filter(k => k in state && (state.mode === 'sequence' || !k.startsWith('seq')) && (state.mode === 'keys' || k !== 'keys'));
+  return sanitizeLook(structuredClone(Object.fromEntries(keys.map(k => [k, state[k]]))));
 }
 
 /** Everything a look sets when applied: the presets' base, untuned, then the look itself. */
 export const lookSettings = set => ({ ...PRESET_BASE, tune: {}, intensity: {}, ...set });
 
-const same = (a, b) => (a && typeof a === 'object' ? JSON.stringify(a) === JSON.stringify(b ?? {}) : String(a) === String(b));
+/** JSON with sorted keys: the same tuning saved in another key order is the same. */
+const stable = v => JSON.stringify(v, (_, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([p], [q]) => (p < q ? -1 : p > q ? 1 : 0))) : x));
+const same = (a, b) => (a && typeof a === 'object' ? stable(a) === stable(b ?? {}) : String(a) === String(b));
 /** True when the current state is this look (its card shows as selected). */
 export function matchesLook(set, state) {
   const full = lookSettings(set);

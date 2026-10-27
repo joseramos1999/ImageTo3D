@@ -31,6 +31,7 @@ const ISO = 0.5;
 export const DEFAULT_MASK = {
   mode: 'auto', color: '#ffffff', tolerance: 0.5, invert: false, denoise: 2, fillHoles: false,
   vector: true, split: false, colors: 'auto', holeArea: 0, join: 0, strokes: [], removed: [],
+  vectorRev: 2,   // how an SVG is read: 2 = with strokes and texts (1.2); a mask without it is older
 };
 
 /** Reads the image into an ink field (0..1 per pixel, 0.5 = the cut). */

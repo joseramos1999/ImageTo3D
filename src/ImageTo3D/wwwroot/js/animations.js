@@ -1021,7 +1021,11 @@ export function poseAt(anim, t, motion, pieces, once) {
 const IDENTITY = new Quaternion();
 const ORIGIN = { x: 0, y: 0, z: 0 };
 
-/** Moves the pose `k` times as far from rest: position, scale and (unless it spins) rotation. */
+/**
+ * Moves the pose `k` times as far from rest: position, scale and rotation. An animation that
+ * spins keeps its turns, and its pieces stay as they are (their places go with their turns: a
+ * ring of pieces stays a ring); only the whole logo's travel and size scale.
+ */
 function scalePose(k, keepRotation, motion, pieces) {
   const scale = (o, home) => {
     o.position.set(home.x + (o.position.x - home.x) * k, home.y + (o.position.y - home.y) * k, home.z + (o.position.z - home.z) * k);
@@ -1030,34 +1034,43 @@ function scalePose(k, keepRotation, motion, pieces) {
     if (!keepRotation) o.quaternion.slerpQuaternions(IDENTITY, o.quaternion.clone(), k);
   };
   scale(motion, ORIGIN);
-  for (const p of pieces) scale(p, p.userData.home);
+  if (!keepRotation) for (const p of pieces) scale(p, p.userData.home);
 }
 
 /**
- * Whether an animation turns the logo (or a piece) more than 100° at some point: a spin, a flip.
- * Its turns are whole on purpose (the loop closes, the logo faces front at the end), so the
- * intensity leaves them alone. Found once per animation by posing it with the effects muted.
+ * Whether an animation turns the logo (or a piece) more than 100° at some point, or jumps in its
+ * turn from one instant to the next (Giro frontal swaps sides): its turns are exact on purpose
+ * (the loop closes, the logo faces front), so the intensity leaves them alone. Found by posing it
+ * with the effects muted, once per animation and logo (pieces differ: an explosion with many of
+ * them turns some further), so the same project always exports the same.
  */
-const spinCache = new Map();
+const spinCache = new WeakMap();   // logo group → Map(animation id → bool)
 function spins(anim, motion, pieces) {
-  if (spinCache.has(anim.id)) return spinCache.get(anim.id);
+  const logo = pieces[0]?.parent;
+  if (!logo) return false;
+  if (!spinCache.has(logo)) spinCache.set(logo, new Map());
+  const cache = spinCache.get(logo);
+  if (cache.has(anim.id)) return cache.get(anim.id);
   const saved = { ...fx };
   for (const key of Object.keys(fx)) if (typeof fx[key] === 'function') fx[key] = () => {};
   const size = pieces[0]?.parent?.userData.size || { x: 4, y: 2, z: 0.4 };
   const angle = o => 2 * Math.acos(Math.min(1, Math.abs(o.quaternion.w)));
-  let max = 0;
+  let max = 0, jump = 0, prev = null;
   try {
-    for (let i = 0; i <= 32; i++) {
+    for (let i = 0; i <= 48; i++) {
       resetPose(motion, pieces);
-      const u = i / 32;
+      const u = i / 48;
       anim.apply({ m: motion, ps: pieces, q: u, p: u % 1, t: u * (anim.period || anim.duration || 1), size, clip: fx.clip });
-      max = Math.max(max, angle(motion), ...pieces.map(angle));
+      const now = [motion, ...pieces].map(o => o.quaternion.clone());
+      max = Math.max(max, ...now.map(q => 2 * Math.acos(Math.min(1, Math.abs(q.w)))));
+      if (prev) jump = Math.max(jump, ...now.map((q, j) => q.angleTo(prev[j])));
+      prev = now;
     }
   } finally {
     Object.assign(fx, saved);
   }
-  const result = max > deg(100);
-  spinCache.set(anim.id, result);
+  const result = max > deg(100) || jump > deg(60);
+  cache.set(anim.id, result);
   return result;
 }
 

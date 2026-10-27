@@ -18,6 +18,13 @@ const PREVIEW_MAX = 360;
 /** Curve sampling per «Suavizado» step: target length of each straight piece, in texture
  *  pixels (the logo is 2048 px across), so a big circle gets as many points as it needs. */
 const SEGMENT_PX = [24, 16, 10, 7, 5, 3.5, 2.5];
+/** Strokes and texts are drawn and traced once per layer; past this many it is quicker (and
+ *  as good) to trace the whole SVG as an image. */
+const MAX_RASTER_LAYERS = 24;
+const XLINK = 'http://www.w3.org/1999/xlink';
+const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon']);
+/** Containers whose content is never painted where it stands (only through a reference). */
+const UNPAINTED = new Set(['defs', 'symbol', 'clipPath', 'mask', 'pattern', 'marker']);
 
 /** Points along a path (THREE.Path / Shape), each curve split by its length; no closing duplicate. */
 function samplePath(path, scale, segPx) {
@@ -34,74 +41,157 @@ function samplePath(path, scale, segPx) {
 
 const cssHex = c => '#' + c.getHexString(THREE.SRGBColorSpace);
 
-/** A CSS colour as #rrggbb, or null for what has no single colour (a gradient, currentColor). */
+let probe = null;
+/** A CSS colour as #rrggbb, or null for what has no single colour of its own (a gradient,
+ *  currentColor, inherit…): the browser's own parser decides, so names and rgb() work too. */
 function solidColor(css) {
-  if (!css || String(css).startsWith('url(')) return null;
-  try {
-    const c = new THREE.Color();
-    c.setStyle(String(css));
-    return cssHex(c);
-  } catch { return null; }
+  if (!css || /^\s*(url\(|currentcolor|inherit|none|transparent)/i.test(String(css))) return null;
+  probe ||= new OffscreenCanvas(1, 1).getContext('2d');
+  probe.fillStyle = '#010203';
+  probe.fillStyle = String(css);
+  const v = probe.fillStyle;
+  if (v === '#010203' && !/^#?010203$/i.test(String(css).trim())) return null;
+  const c = new THREE.Color();
+  c.setStyle(v);
+  return cssHex(c);
+}
+
+/** The fill a <text> is painted with, from its own attributes and style and its ancestors';
+ *  null when its parts differ (a multicolour title) or it cannot be told here (a CSS class). */
+function textFill(node) {
+  const own = el => {
+    const style = el.getAttribute?.('style') || '';
+    const m = style.match(/(?:^|;)\s*fill\s*:\s*([^;]+)/i);
+    return m ? m[1].trim() : el.getAttribute?.('fill');
+  };
+  // A style sheet may colour it by tag or class: then the drawing tells (traceRasterItems).
+  if (node.ownerDocument?.querySelector('style')) return null;
+  let value = null;
+  for (let el = node; el && el.nodeType === 1; el = el.parentNode) { value = own(el); if (value) break; }
+  const color = solidColor(value || 'black');   // SVG's default fill is black
+  if (!color) return null;
+  for (const t of node.querySelectorAll('tspan, textPath')) { const f = own(t); if (f && solidColor(f) !== color) return null; }
+  return color;
+}
+
+/** Hidden by an attribute or inline style on the element or an ancestor. */
+function hiddenByAttribute(node) {
+  for (let el = node; el && el.nodeType === 1; el = el.parentNode) {
+    const style = (el.getAttribute('style') || '').replace(/\s/g, '').toLowerCase();
+    if (el.getAttribute('display') === 'none' || el.getAttribute('visibility') === 'hidden' || /display:none|visibility:hidden/.test(style)) return true;
+  }
+  return false;
+}
+
+/**
+ * What SVGLoader does not model the way the browser draws it, which would leave the vectors and
+ * the drawing out of step: a <use> of a <symbol> or <svg>, or with its own size; a nested <svg>
+ * with its own viewport; transforms set by CSS. Such an SVG is traced as an image.
+ */
+function unsupportedReason(doc) {
+  const root = doc.documentElement;
+  for (const use of doc.querySelectorAll('use')) {
+    const id = (use.getAttributeNS(XLINK, 'href') || use.getAttribute('href') || '').replace(/^#/, '');
+    const ref = id && doc.getElementById(id);
+    if (ref && (ref.localName === 'symbol' || ref.localName === 'svg')) return 'usa símbolos (<symbol>)';
+    if (use.hasAttribute('width') || use.hasAttribute('height')) return 'usa <use> con tamaño propio';
+  }
+  for (const svg of doc.querySelectorAll('svg')) {
+    if (svg !== root && ['viewBox', 'x', 'y', 'width', 'height'].some(a => svg.hasAttribute(a))) return 'lleva un <svg> anidado';
+  }
+  const css = [...doc.querySelectorAll('style')].map(s => s.textContent).join(' ') + [...doc.querySelectorAll('[style]')].map(e => e.getAttribute('style')).join(' ');
+  if (/transform\s*:/i.test(css)) return 'usa transformaciones por CSS';
+  return null;
 }
 
 /**
  * Parses the SVG. Returns { paths, items, bbox, doc, report } or throws. `items` is what gets
  * painted, in paint order: fills (vectors), strokes and texts (drawn and traced, see
- * traceRasterItems); `paths` are the fills alone. `report` counts texts, embedded bitmaps
- * (which cannot be built: the caller traces the raster), strokes and gradients.
+ * traceRasterItems); `paths` are the fills alone. `report` counts texts, embedded bitmaps,
+ * strokes and gradients, and says what cannot be built from the vectors (`unsupported`).
  */
 export function parseVectorSvg(text) {
+  // SVG 2 references (<use href>) as SVGLoader reads them (xlink:href); the drawing is the same.
+  const pre = new DOMParser().parseFromString(text, 'image/svg+xml');
+  let fixedHref = false;
+  for (const use of pre.querySelectorAll('use')) {
+    if (use.getAttribute('href') && !use.getAttributeNS(XLINK, 'href')) { use.setAttributeNS(XLINK, 'xlink:href', use.getAttribute('href')); fixedHref = true; }
+  }
+  if (fixedHref) text = new XMLSerializer().serializeToString(pre);
+
   const data = new SVGLoader().parse(text);
   const doc = data.xml?.ownerDocument || data.xml;
-  const report = { texts: 0, images: 0, strokes: 0, gradients: 0, background: false };
-  const textNodes = doc?.querySelectorAll ? [...doc.querySelectorAll('text')].filter(t => t.textContent.trim()) : [];
+  const report = { texts: 0, images: 0, strokes: 0, gradients: 0, background: false, unsupported: null };
+  if (doc?.querySelectorAll) {
+    report.images = doc.querySelectorAll('image').length;
+    report.unsupported = unsupportedReason(doc);
+  }
+
+  // Paint order as SVGLoader walks the document (a <use> where it stands, not where its target
+  // is defined), counting the shapes it turns into paths; a <text> sits after the shapes before it.
+  const textAt = new Map();
+  let shapes = 0;
+  const walk = (node, viaUse) => {
+    if (!node || node.nodeType !== 1) return;
+    const tag = node.localName;
+    if (tag === 'text') { if (!textAt.has(node)) textAt.set(node, shapes); return; }
+    if (SHAPE_TAGS.has(tag)) { shapes++; return; }
+    if (tag === 'use') {
+      const id = (node.getAttributeNS(XLINK, 'href') || node.getAttribute('href') || '').replace(/^#/, '');
+      walk(id && doc.getElementById(id), true);
+      return;
+    }
+    if (UNPAINTED.has(tag) && !viaUse) return;
+    for (const child of node.children) walk(child, false);
+  };
+  if (doc?.documentElement) walk(doc.documentElement, false);
+  const textNodes = [...textAt.keys()].filter(t => t.textContent.trim() && !hiddenByAttribute(t));
   report.texts = textNodes.length;
-  if (doc?.querySelectorAll) report.images = doc.querySelectorAll('image').length;
 
   const paths = [], items = [];
-  for (const p of data.paths) {
+  data.paths.forEach((p, order) => {
     const st = p.userData?.style || {};
     const hidden = st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity ?? 1) <= 0;
-    if (hidden) continue;
+    if (hidden) return;
     const hasStroke = st.stroke && st.stroke !== 'none' && Number(st.strokeWidth ?? 1) > 0 && Number(st.strokeOpacity ?? 1) > 0;
     const hasFill = st.fill && st.fill !== 'none' && Number(st.fillOpacity ?? 1) > 0;
     // SVG paints an element's fill first and its stroke over it.
     if (hasFill) {
       const gradient = String(st.fill).startsWith('url(');
       if (gradient) report.gradients++;
-      const shapes = p.toShapes();
-      if (shapes.length) {
-        const item = { kind: 'fill', node: p.userData.node, color: gradient ? null : cssHex(p.color), shapes, bbox: shapesBox(shapes) };
+      const shapeList = p.toShapes();
+      if (shapeList.length) {
+        const item = { kind: 'fill', order, node: p.userData.node, color: gradient ? null : cssHex(p.color), shapes: shapeList, bbox: shapesBox(shapeList) };
         paths.push(item);
         items.push(item);
       }
     }
     if (hasStroke && p.subPaths.length) {
       report.strokes++;
-      // Its box reaches half the width past the path (more at mitred corners).
+      // Its box reaches half the width past the path, more at mitred corners.
       const box = new THREE.Box2();
       for (const sp of p.subPaths) for (const v of sp.getPoints()) box.expandByPoint(v);
-      box.expandByScalar(Number(st.strokeWidth ?? 1) * Math.max(1, Number(st.strokeMiterLimit ?? 4) / 2));
-      items.push({ kind: 'stroke', node: p.userData.node, color: solidColor(st.stroke), bbox: box });
+      const mitre = (st.strokeLineJoin || 'miter') === 'miter' ? Math.max(1, Number(st.strokeMiterLimit ?? 4)) : 1;
+      box.expandByScalar(Number(st.strokeWidth ?? 1) / 2 * mitre);
+      items.push({ kind: 'stroke', order, node: p.userData.node, color: solidColor(st.stroke), bbox: box });
     }
-  }
-  for (const node of textNodes) items.push({ kind: 'text', node, color: null, bbox: null });
-  // Texts sit among the paths in document order (fill and stroke of one element stay together).
-  const order = new Map([...(doc?.querySelectorAll?.('*') || [])].map((n, i) => [n, i]));
-  const rank = it => order.get(it.node) ?? Infinity;
-  items.sort((a, b) => rank(a) - rank(b));
+  });
+  for (const node of textNodes) items.push({ kind: 'text', order: textAt.get(node) - 0.5, node, color: textFill(node), bbox: null });
+  items.sort((a, b) => a.order - b.order);   // stable: an element's fill stays before its stroke
 
   // A full-size rectangle painted first is the artboard's background, not part of the logo.
-  if (paths.length > 1) {
-    const all = paths.slice(1).reduce((b, p) => b.union(p.bbox), new THREE.Box2());
-    const first = paths[0], fb = first.bbox, fs = fb.getSize(new THREE.Vector2()), as = all.getSize(new THREE.Vector2());
+  const first = items[0], rest = items.slice(1).filter(it => it.node !== first?.node && it.bbox);
+  if (first?.kind === 'fill' && rest.length) {
+    const all = rest.reduce((b, it) => b.union(it.bbox), new THREE.Box2());
+    const fb = first.bbox, fs = fb.getSize(new THREE.Vector2()), as = all.getSize(new THREE.Vector2());
     const pts = first.shapes[0].getPoints().length;
     if (first.shapes.length === 1 && !first.shapes[0].holes.length && pts <= 6 &&
         fb.containsBox(all) && fs.x * fs.y > 1.2 * as.x * as.y) {
       report.background = true;
       first.node?.remove();
-      paths.shift();
-      items.splice(items.indexOf(first), 1);
+      paths.splice(paths.indexOf(first), 1);
+      // Its border too, if it had one.
+      for (let i = items.length - 1; i >= 0; i--) if (items[i].node === first.node) items.splice(i, 1);
     }
   }
 
@@ -123,11 +213,23 @@ function shapesBox(shapes) {
   return b;
 }
 
-/** Whether the parsed SVG is worth building from its vectors (else trace the raster). */
-export function vectorVerdict(parsed) {
+/**
+ * Whether the parsed SVG is worth building from its vectors (else trace the raster). `legacy`:
+ * the rules before 1.2 (fills only; any text, or no fill, meant tracing), for old projects.
+ */
+export function vectorVerdict(parsed, { legacy = false } = {}) {
   const r = parsed.report;
   if (r.images) return { ok: false, reason: 'lleva imágenes incrustadas' };
+  if (legacy) {
+    if (!parsed.paths.length) return { ok: false, reason: 'el SVG no tiene formas rellenas' };
+    if (r.texts) return { ok: false, reason: 'tiene textos sin convertir a trazados' };
+    return { ok: true };
+  }
+  if (r.unsupported) return { ok: false, reason: r.unsupported };
   if (!parsed.items.length) return { ok: false, reason: 'el SVG no tiene formas, trazos ni textos que se vean' };
+  const { layers, of } = layersOf(parsed.items);
+  const rasterLayers = new Set(parsed.items.map((it, i) => (it.kind === 'fill' ? -1 : of[i])).filter(l => l >= 0)).size;
+  if (rasterLayers > MAX_RASTER_LAYERS) return { ok: false, reason: `tiene demasiados textos o trazos sueltos (${rasterLayers} de ${layers.length} capas)` };
   return { ok: true };
 }
 
@@ -162,14 +264,15 @@ function polys(path, L, segPx) {
 
 /**
  * Layers: consecutive items of the same colour in paint order (those without a single colour —
- * gradients, texts — each on their own). Returns [{ index, color }] and the layer of every item.
+ * gradients, multicolour texts — each on their own, and they keep the artwork on their face).
+ * Returns [{ index, color, gradient }] and the layer of every item.
  */
 function layersOf(items) {
   const layers = [], of = [];
   for (const p of items) {
     const last = layers[layers.length - 1];
     if (last && p.color && last.color === p.color) { of.push(last.index); continue; }
-    layers.push({ index: layers.length, color: p.color, gradient: !p.color && p.kind === 'fill' });
+    layers.push({ index: layers.length, color: p.color, gradient: !p.color });
     of.push(layers.length - 1);
   }
   return { layers, of };
@@ -206,10 +309,15 @@ export function vectorOutlines(parsed, L, smooth = 2) {
 async function traceRasterItems(parsed, L, layers, of) {
   parsed.rasterLoops = [];
   const byLayer = new Map();
-  parsed.items.forEach((it, i) => { if (it.kind !== 'fill') byLayer.set(of[i], [...(byLayer.get(of[i]) || []), it]); });
+  parsed.items.forEach((it, i) => {
+    if (it.kind === 'fill') return;
+    if (!byLayer.has(of[i])) byLayer.set(of[i], []);
+    byLayer.get(of[i]).push(it);
+  });
   // Traced at half the texture's size (a quarter of the work); the smoothing hides the difference.
   const k = L.w * L.h > 1e6 ? 2 : 1, mw = Math.max(2, Math.round(L.w / k)), mh = Math.max(2, Math.round(L.h / k));
   for (const [layer, list] of byLayer) {
+    await new Promise(r => setTimeout(r, 0));   // one layer per task: the window stays responsive
     const canvas = await rasterise(parsed, L, new Set(list));
     const small = k === 1 ? canvas : new OffscreenCanvas(mw, mh);
     if (k !== 1) small.getContext('2d').drawImage(canvas, 0, 0, mw, mh);
@@ -233,13 +341,13 @@ async function traceRasterItems(parsed, L, layers, of) {
   }
 }
 
-const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon']);
 const addStyle = (el, css) => el.setAttribute('style', `${el.getAttribute('style') || ''};${css}`);
 
 /**
  * The SVG drawn by the browser at the texture's size, with the logo's box as its viewBox.
- * With `only` (a set of stroke / text items), just those are painted: every fill is off, and
- * so are the other strokes, texts and images.
+ * With `only` (a set of stroke / text items), just those are painted, fully opaque (a stroke at
+ * 40 % opacity is still part of the logo): every fill is off, and so are the other strokes,
+ * texts and images. Masks, clip paths, patterns and markers are left as they are.
  */
 async function rasterise(parsed, L, only = null) {
   const root = parsed.doc.documentElement;
@@ -255,9 +363,11 @@ async function rasterise(parsed, L, only = null) {
     const texts = new Set([...only].filter(it => it.kind === 'text').map(it => it.node));
     from.forEach((el, i) => {
       const tag = el.localName, copy = to[i];
-      if (tag === 'text') { if (!texts.has(el)) addStyle(copy, 'display:none !important'); return; }
+      if (el.closest('mask, clipPath, pattern, marker')) return;
+      addStyle(copy, 'opacity:1 !important');
+      if (tag === 'text') { addStyle(copy, texts.has(el) ? 'fill-opacity:1 !important' : 'display:none !important'); return; }
       if (tag === 'image') { addStyle(copy, 'display:none !important'); return; }
-      if (SHAPE_TAGS.has(tag)) addStyle(copy, strokes.has(el) ? 'fill:none !important' : 'fill:none !important;stroke:none !important');
+      if (SHAPE_TAGS.has(tag)) addStyle(copy, strokes.has(el) ? 'fill:none !important;stroke-opacity:1 !important' : 'fill:none !important;stroke:none !important');
     });
   }
   const blob = new Blob([new XMLSerializer().serializeToString(doc)], { type: 'image/svg+xml' });
@@ -294,14 +404,14 @@ export async function vectorTexture(parsed, L) {
   await traceRasterItems(parsed, L, layers, of);
   const shapes = parsed.items.map(it => (it.kind === 'fill' ? polys(it, L, 4) : []));
 
-  // Average colour of gradient-filled paths, read from the raster under their shapes.
-  if (layers.some(l => l.gradient)) {
+  // Average colour of gradient-filled paths (strokes and texts got theirs from their drawing).
+  if (layers.some(l => !l.color)) {
     const k = Math.min(1, 512 / Math.max(L.w, L.h)), sw = Math.max(1, Math.round(L.w * k)), sh = Math.max(1, Math.round(L.h * k));
     const small = new OffscreenCanvas(sw, sh), g = small.getContext('2d', { willReadFrequently: true });
     g.drawImage(raster, 0, 0, sw, sh);
     const px = g.getImageData(0, 0, sw, sh).data;
     const m = new OffscreenCanvas(sw, sh), mg = m.getContext('2d', { willReadFrequently: true });
-    for (const layer of layers.filter(l => l.gradient)) {
+    for (const layer of layers.filter(l => !l.color)) {
       mg.clearRect(0, 0, sw, sh);
       mg.setTransform(k, 0, 0, k, 0, 0);
       parsed.items.forEach((_, i) => { if (of[i] === layer.index) shapes[i].forEach(pl => mg.fill(path2d(pl), 'evenodd')); });
@@ -336,6 +446,38 @@ export async function vectorTexture(parsed, L) {
   fillTransparent(img, Math.ceil(Math.max(L.w, L.h) / 40));
   ctx.putImageData(img, 0, 0);
   return { color: c, raster, layers };
+}
+
+/**
+ * The share of what the browser draws (opaque pixels of `raster`) that the outlines leave out:
+ * something SVGLoader does not read. Measured at 256 px, with the outlines' edge widened a
+ * pixel so anti-aliasing never counts.
+ */
+export function uncoveredShare(outlines, raster, L) {
+  const k = Math.min(1, 256 / Math.max(L.w, L.h)), w = Math.max(1, Math.round(L.w * k)), h = Math.max(1, Math.round(L.h * k));
+  const ink = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  ink.drawImage(raster, 0, 0, w, h);
+  const drawn = ink.getImageData(0, 0, w, h).data;
+  const m = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  m.fillStyle = m.strokeStyle = '#fff';
+  m.lineWidth = 2;
+  for (const o of outlines) {
+    const p = new Path2D();
+    for (const loop of [o.outer, ...o.holes]) {
+      loop.forEach((v, i) => { const x = (v.x - 0.5) * k, y = (v.y - 0.5) * k; i ? p.lineTo(x, y) : p.moveTo(x, y); });
+      p.closePath();
+    }
+    m.fill(p, 'evenodd');
+    m.stroke(p);
+  }
+  const covered = m.getImageData(0, 0, w, h).data;
+  let total = 0, missed = 0;
+  for (let i = 3; i < drawn.length; i += 4) {
+    if (drawn[i] < 160) continue;
+    total++;
+    if (covered[i] < 128) missed++;
+  }
+  return total ? missed / total : 0;
 }
 
 /** The "after" preview for the Recorte panel: the texture cut out by the outlines. */

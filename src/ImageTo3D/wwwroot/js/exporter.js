@@ -269,10 +269,13 @@ function memoryTarget() {
     parts,
     write(pos, bytes) {
       if (pos === size) { parts.push(bytes.slice()); size += bytes.length; return; }
-      let start = 0;
+      // A patch of earlier bytes, possibly across parts (the MOV's 64-bit mdat header).
+      let start = 0, done = 0;
       for (const part of parts) {
-        if (pos >= start && pos + bytes.length <= start + part.length) { part.set(bytes, pos - start); return; }
+        const from = Math.max(pos + done, start), to = Math.min(pos + bytes.length, start + part.length);
+        if (from < to) { part.set(bytes.subarray(from - pos, to - pos), from - start); done = to - pos; }
         start += part.length;
+        if (done >= bytes.length) return;
       }
       throw new Error('escritura fuera de orden');
     },

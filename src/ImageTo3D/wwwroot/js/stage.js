@@ -354,14 +354,17 @@ export class Stage {
 
   /** Places the camera so the logo fills the frame comfortably. */
   frame(round = false) {
-    // A glide still dying out from the user's last drag would carry on from the new framing.
+    this.camera.position.copy(this.framePosition(round));
+    this.controls.target.set(0, 0, 0);
+    this.controls.update();
+  }
+
+  /** Ends a glide still dying out from the user's last drag, which would carry on from a new framing. */
+  settleControls() {
     const damping = this.controls.enableDamping;
     this.controls.enableDamping = false;
     this.controls.update();
     this.controls.enableDamping = damping;
-    this.camera.position.copy(this.framePosition(round));
-    this.controls.target.set(0, 0, 0);
-    this.controls.update();
   }
 
   /** Where frame() puts the camera (aiming at the origin), without moving it. */

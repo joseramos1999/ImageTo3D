@@ -20,14 +20,14 @@ import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
 import { SIZES, GUIDES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host, localizeKeys } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
-import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview } from './vector.js';
+import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview, uncoveredShare } from './vector.js';
 import { renderLayersPanel } from './layers-ui.js';
 import { initRelief, reliefOptions } from './relief-ui.js';
 import { keysTimeline, DEFAULT_KEYS } from './keys.js';
 import { renderKeysPanel } from './keys-ui.js';
 import { buildPrint } from './print.js';
 import { TEMPLATES } from './templates.js';
-import { LOOK_EXT, NAME_MAX, lookFromState, lookSettings, matchesLook, serializeLook, readLookFile } from './looks.js';
+import { LOOK_EXT, NAME_MAX, lookFromState, lookSettings, matchesLook, serializeLook, readLookFile, sanitizeLook } from './looks.js';
 import { DEFAULT_RELIEF } from './relief.js';
 
 const $ = sel => document.querySelector(sel);
@@ -50,7 +50,13 @@ const DEFAULTS = {
 /** Settings from older versions (sizes, chained intro / outro) brought up to date. */
 /** Before 1.2, «Laterales: Color» only applied to «Colores del logo» (and there was no «Bisel»). */
 const migrateSides = s => (s && s.bevelMat === undefined && s.sideMode === 'custom' && s.material && s.material !== 'logo' ? { ...s, sideMode: 'logo' } : s);
-const migrate = s => migrateSides(migrateAnimationSettings(migrateSettings(s)));
+/** Material tuning and intensities come from files too: only valid values (as a look's). */
+const migrateTuning = s => {
+  if (!s || (!('tune' in s) && !('intensity' in s))) return s;
+  const clean = sanitizeLook({ tune: s.tune, intensity: s.intensity });
+  return { ...s, tune: clean.tune || {}, intensity: clean.intensity || {} };
+};
+const migrate = s => migrateTuning(migrateSides(migrateAnimationSettings(migrateSettings(s))));
 const STORE_KEY = 'imageto3d.settings.v1';
 const state = { ...DEFAULTS };
 try { Object.assign(state, migrate(JSON.parse(localStorage.getItem(STORE_KEY) || '{}'))); } catch { /* fresh start */ }
@@ -86,13 +92,14 @@ const NO_SHAPE_MSG = 'No se encontró la forma del logo. Ajusta la máscara (mod
 /** Takes ownership of `bitmap`. `blob` is the original file, kept for saving projects. */
 async function loadSource(bitmap, { name, blob, thumbUrl = null, mask = DEFAULT_MASK }) {
   const job = ++pipeJob;
+  const legacyVector = mask.vectorRev === 1;   // a project saved before 1.2 (see buildVector)
   setBusy(true);
   const t0 = performance.now();
   try {
     const before = await previewBitmap(bitmap);
     // An SVG is also read as vectors; the raster still goes to the worker, so "trace it as
     // an image" stays one switch away.
-    const vecJob = blob?.type === 'image/svg+xml' ? buildVector(blob) : null;
+    const vecJob = blob?.type === 'image/svg+xml' ? buildVector(blob, legacyVector) : null;
     const r = await pipeline.load(bitmap, mask, state.smooth);
     const vec = await vecJob;
     if (job !== pipeJob) { r.color?.close(); r.after?.close(); before.close(); return false; }
@@ -120,13 +127,19 @@ async function loadSource(bitmap, { name, blob, thumbUrl = null, mask = DEFAULT_
 }
 
 /** The SVG's own paths, layers and colour texture, or { note } saying why they can't be used. */
-async function buildVector(blob) {
+async function buildVector(blob, legacy = false) {
   try {
     const parsed = parseVectorSvg(await blob.text());
-    const verdict = vectorVerdict(parsed);
+    // Before 1.2 an SVG was built from its fills alone, and one with text or without fills was
+    // traced as an image: a project saved then opens exactly as it was (its layers, its edits).
+    if (legacy) parsed.items = parsed.items.filter(it => it.kind === 'fill');
+    const verdict = vectorVerdict(parsed, { legacy });
     if (!verdict.ok) return { note: verdict.reason };
     const L = vectorLayout(parsed);
     const tex = await vectorTexture(parsed, L);
+    // A safety net for what SVGLoader does not model: if the browser draws much the outlines miss,
+    // the SVG is traced as an image instead (as everything was before 1.2).
+    if (!legacy && uncoveredShare(vectorOutlines(parsed, L, 2), tex.raster, L) > 0.04) return { note: 'tiene partes que no se pueden leer como vector' };
     return { parsed, L, color: tex.color, layers: tex.layers };
   } catch (e) {
     console.warn('SVG vector import failed:', e);
@@ -221,7 +234,9 @@ function disposeSource() {
  * frame on purpose (a meteor from afar). The camera never backs off more than FRAME_MAX_BACK.
  */
 let userMovedCamera = false;
-const FRAME_SAMPLES = 48, FRAME_FILL = 0.92, FRAME_MAX_BACK = 1.8;
+// 61 instants: prime and above every cycle count a clip can have (20), so the samples never fall
+// on the same few phases of a fast spin (12 turns sampled 48 times would only see 0°, 90°…).
+const FRAME_SAMPLES = 61, FRAME_FILL = 0.92, FRAME_MAX_BACK = 1.8;
 
 /** Whether instant t of the clip belongs to the framing (not an entrance or exit off-frame). */
 function framedInstant(t) {
@@ -237,8 +252,13 @@ function framedInstant(t) {
 }
 function frameCamera() {
   userMovedCamera = false;
+  stage.settleControls();
+  // Framed at «Escala» 1: the scale then sizes the logo within that framing, and keeps doing so
+  // through every reframe (changing animation, intensity…).
+  const userScale = stage.root.scale.x;
+  stage.root.scale.setScalar(1);
   stage.frame(false);
-  if (!logo?.children.length) return;
+  if (!logo?.children.length) { stage.root.scale.setScalar(userScale); return; }
   const cam = stage.camera, target = stage.controls.target.clone();
   const dir = cam.position.clone().sub(target).normalize(), d0 = cam.position.distanceTo(target);
   // Every instant's pose, once: the corners of each visible piece's box, in world space.
@@ -257,7 +277,7 @@ function frameCamera() {
         pts.push(c.x, c.y, c.z);
       }
     }
-    samples.push({ cycle: t / clip, pts });
+    if (pts.length) samples.push({ cycle: t / clip, pts });   // an instant with nothing shown says nothing
   }
   const tanV = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2), tanH = tanV * cam.aspect;
   let d = d0;
@@ -296,6 +316,8 @@ function frameCamera() {
       d = hi;
     }
   }
+  stage.root.scale.setScalar(userScale);
+  stage.root.updateMatrixWorld(true);
   cam.position.copy(target).addScaledVector(dir, Math.min(d, d0 * FRAME_MAX_BACK));
   cam.lookAt(target);
   stage.controls.update();
@@ -555,9 +577,9 @@ function applyMaterials() {
 }
 
 async function openFile(file) {
+  if (file?.name?.toLowerCase().endsWith('.' + LOOK_EXT)) return importLook(file);
   openGeneration++;
   if (file?.name?.toLowerCase().endsWith('.' + PROJECT_EXT)) return openProjectFile(file);
-  if (file?.name?.toLowerCase().endsWith('.' + LOOK_EXT)) return importLook(file);
   if (!file || !file.type.startsWith('image/')) { toast('Ese archivo no es una imagen.', 'error'); return; }
   let decoded;
   try {
@@ -879,7 +901,7 @@ async function runExport(out = null) {
       const blur = motionBlur();
       // A seamless loop wraps round its ends (its last frame flows into the first); a clip with
       // a start and an end holds at them.
-      const loops = tl ? tl.kind === 'keys' && tl.keys.loop : anim.kind === 'loop';
+      const loops = tl ? (tl.kind === 'keys' ? tl.keys.loop : !tl.introSecs && !tl.outroSecs && !!tl.fit) : anim.kind === 'loop';
       const edge = tt => (loops ? ((tt % seconds) + seconds) % seconds : Math.max(0, Math.min(seconds, tt)));
       cancelExport = false;
       if (!out) showProgress(`Renderizando ${ANIMATED[kind]}${stage.transparent && !NO_ALPHA.has(kind) ? ' con transparencia' : ''}${blur ? ` y desenfoque de movimiento (${blur.n} muestras)` : ''} · ${w}×${h} · ${fps} fps…`);
@@ -911,6 +933,7 @@ async function runExport(out = null) {
       }
     } finally {
       restore();
+      stage.disposeBlur();   // the blur's render targets (hundreds of MB at 4K) only live during an export
       exporting = false;
       if (!out) hideProgress();
     }
@@ -924,8 +947,9 @@ async function runExport(out = null) {
 
 /** The export's motion blur: { angle (shutter, degrees), n (renders per frame) }, or null. */
 function motionBlur() {
-  const angle = Number(state.motionBlur) || 0;
-  return angle > 0 ? { angle, n: Math.max(2, Number(state.blurSamples) || 8) } : null;
+  const angle = Math.min(360, Math.max(0, Number(state.motionBlur) || 0));
+  const n = [4, 8, 16].includes(Number(state.blurSamples)) ? Number(state.blurSamples) : 8;
+  return angle > 0 ? { angle, n } : null;
 }
 
 function showProgress(title) { $('#progress-title').textContent = title; setProgress(0); $('#progress').hidden = false; }
@@ -1036,7 +1060,7 @@ function markDirty() {
 }
 
 function cameraState() {
-  return { p: stage.camera.position.toArray(), t: stage.controls.target.toArray() };
+  return { p: stage.camera.position.toArray(), t: stage.controls.target.toArray(), moved: userMovedCamera };
 }
 
 function applyCamera(c) {
@@ -1044,6 +1068,12 @@ function applyCamera(c) {
   stage.camera.position.fromArray(c.p);
   stage.controls.target.fromArray(c.t);
   stage.controls.update();
+  // Placed by hand, it stays through later changes of animation. Saves from before 1.2 don't say:
+  // a camera off the automatic direction (or aim) was placed by hand.
+  userMovedCamera = c.moved ?? (() => {
+    const p = new THREE.Vector3().fromArray(c.p), t = new THREE.Vector3().fromArray(c.t);
+    return t.length() > 1e-3 || p.sub(t).normalize().angleTo(new THREE.Vector3(0, 0.1, 1).normalize()) > 0.02;
+  })();
 }
 
 /** A small JPEG of what the viewport shows, for the recent-projects menu. */
@@ -1129,7 +1159,8 @@ async function openStored(id, generation = ++openGeneration) {
   const rec = await store.get(id);
   if (!rec || generation !== openGeneration) return false;
   const m = rec.meta;
-  return openProjectData({ name: m.name, settings: m.settings, mask: m.mask, camera: m.camera, image: { name: m.imageName, blob: rec.blob } }, id, generation);
+  // An autosave from before 1.2 has no vectorRev: it opens with the rules it was made with.
+  return openProjectData({ name: m.name, settings: m.settings, mask: { ...m.mask, vectorRev: m.mask?.vectorRev ?? 1 }, camera: m.camera, image: { name: m.imageName, blob: rec.blob } }, id, generation);
 }
 
 async function saveProjectFile() {
@@ -1154,7 +1185,10 @@ async function restoreEntry(entry) {
       source.mask = { ...DEFAULT_MASK, ...entry.mask };
       requestRetrace('mask');
     }
+    const prev = { ...state };
     applySettings(entry.settings);
+    const FRAMING = ['anim', 'mode', 'keys', 'intensity', 'speed', 'seconds', 'camMove', 'camAmount', 'seqIntro', 'seqLoop', 'seqOutro', 'seqReps', 'seqLoopSpeed', 'depth', 'bevel'];
+    if (logo && !userMovedCamera && (String(sizeOf(prev)) !== String(sizeOf(state)) || FRAMING.some(k => JSON.stringify(prev[k]) !== JSON.stringify(state[k])))) frameCamera();
     maskUI.refresh();
   } finally {
     restoring = false;
@@ -1278,7 +1312,7 @@ const ON_CHANGE = {
   bloomTh: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
   bloomRadius: () => stage.setBloom(state.bloom, state.bloomTh, state.bloomRadius),
   shineGain: () => stage.setShine(state.shine, state.shineGain),
-  camAmount: () => { stage.cameraAmount = state.camAmount; },
+  camAmount: () => { stage.cameraAmount = state.camAmount; if (logo && !userMovedCamera) frameCamera(); },
   density: () => stage.setParticles(state.particles, state.density, '#ffffff'),
   seconds: () => { updateLoopNote(); updateExportEstimate(); },
   stlWidth: updatePrint, printMargin: updatePrint, printBaseThick: updatePrint, printMinWall: updatePrint,
@@ -1463,7 +1497,7 @@ function syncColorRows() {
 // ───────── «Intensidad» of each animation ─────────
 // state.intensity[animId]: ×0.25 … ×2 (animations.js scales its poses). The slider under the
 // chips edits the selected animation's; the sequence panel has one per part.
-const intensityOf = id => state.intensity?.[id] ?? 1;
+const intensityOf = id => { const v = Number(state.intensity?.[id] ?? 1); return Number.isFinite(v) ? Math.min(2, Math.max(0.25, v)) : 1; };
 intensity.of = intensityOf;
 
 function setIntensity(id, v) {
@@ -1514,7 +1548,7 @@ function renderAnimationList() {
     renderKeysPanel(el, state, {
       change: keys => { state.keys = keys; useKeys(); },
       // While dragging: the preview follows, nothing is saved or redrawn yet.
-      live: keys => { state.keys = keys; if (state.mode !== 'keys') { state.mode = 'keys'; syncModeMarks(); } },
+      live: keys => { state.keys = keys; if (state.mode !== 'keys') { state.mode = 'keys'; onAnimationChanged(); } },
       use: useKeys,
       captureCamera,
     });
@@ -1534,12 +1568,14 @@ function renderAnimationList() {
  */
 function captureCamera() {
   const rad = THREE.MathUtils.radToDeg, cam = stage.camera;
+  // What the viewport shows: the user's camera, plus the keyed camera at the playhead when the
+  // keyframes are what is playing.
+  const wasKeys = state.mode === 'keys';
   // The keys are relative to the keyframes' own framing, whatever was in use before.
   state.mode = 'keys';
-  // What the viewport shows: the user's camera plus the keyed camera at the playhead.
   const saved = { p: cam.position.clone(), q: cam.quaternion.clone() };
   posePreview();
-  if (stage.fx.cameraWanted) stage.applyCameraKeys(stage.fx.cameraWanted);
+  if (wasKeys && stage.fx.cameraWanted) stage.applyCameraKeys(stage.fx.cameraWanted);
   const now = new THREE.Spherical().setFromVector3(cam.position.clone().sub(stage.controls.target));
   cam.position.copy(saved.p);
   cam.quaternion.copy(saved.q);
@@ -1575,8 +1611,9 @@ function useSequence() {
 /** `keepTime`: an edit of the animation in use (keyframes, sequence) keeps the playhead. */
 function onAnimationChanged(keepTime = false) {
   if (!keepTime) play.t = 0;
-  // The new animation is framed whole, unless the user has placed the camera by hand.
-  if (logo && !userMovedCamera) frameCamera();
+  // The new animation is framed whole, unless the user has placed the camera by hand. Editing
+  // keyframes doesn't reframe: their camera keys («Capturar encuadre») are relative to it.
+  if (logo && !userMovedCamera && !(keepTime && state.mode === 'keys')) frameCamera();
   updateFloorForAnim();
   syncModeMarks();
   syncDurationUI();
@@ -1622,6 +1659,7 @@ function syncDurationUI() {
 
 /** A representative pose for stills and thumbnails. */
 function poseStill() {
+  if (state.mode === 'keys') { const tl = currentTimeline(); return tl.pose(tl.clip * 0.5, stage.motion, logo.children); }
   if (isSequence()) {
     const p = sequenceParts(state), a = p.loop || p.intro || p.outro;
     if (!a) return resetPose(stage.motion, logo.children);
@@ -1690,7 +1728,7 @@ async function importLook(file) {
     state.animTab = 'preset';
     segSyncs.forEach(fn => fn());
     renderAnimationList();
-    toast(`Look «${name}» importado.`, 'info', { label: 'Aplicarlo', run: () => applyPreset(lookItems().find(i => i.look === look)) });
+    toast(`Look «${name}» importado.`, 'info', { label: 'Aplicarlo', run: () => { const item = lookItems().find(i => i.look === look); if (item) applyPreset(item); } });
   } catch (e) {
     toast(e.message || 'No se pudo importar el look.', 'error');
   }
@@ -1765,8 +1803,12 @@ function renderPresets() {
       actions.className = 'look-actions';
       for (const [icon, label, run] of [
         ['✎', 'Cambiar el nombre', () => {
+          // In a box of its own: inside the card (a button) a space typed would press it.
           const field = nameField(look.name, v => { if (v && v !== look.name) updateLook(look, { name: v.slice(0, NAME_MAX) }); else renderPresets(); });
-          name.replaceWith(field);
+          const editing = document.createElement('div');
+          editing.className = 'preset editing';
+          editing.append(thumb.cloneNode(true), field);
+          card.replaceWith(editing);
           field.focus();
           field.select();
         }],
@@ -1795,6 +1837,7 @@ function applyPreset(p) {
   play.t = 0;
   applySceneToEngine();
   syncSceneUI();
+  segSyncs.forEach(fn => fn());
   if (logo && !userMovedCamera) frameCamera();
   save();
 }
@@ -1979,7 +2022,7 @@ function stillInstant(choice, savedPlay) {
   if (!choice && !savedPlay.playing) return Math.min(savedPlay.t, last);
   const tl = currentTimeline();
   let t = 0;
-  if (tl?.kind === 'keys') t = savedPlay.t;
+  if (tl?.kind === 'keys') t = tl.keys.loop ? 0 : last;   // the final key (a loop: its start)
   else if (tl) t = tl.introSecs;
   else {
     const anim = getAnimation(state.anim);
@@ -2337,7 +2380,7 @@ function init() {
   $('#env-spin').checked = !!state.envSpin;
   $('#env-spin').addEventListener('change', e => { state.envSpin = e.target.checked; stage.envSpin = state.envSpin; save(); });
   chips('#floors', FLOORS, 'floor', f => stage.setFloor(f.id));
-  chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; });
+  chips('#cameras', CAMERA_MOVES, 'camMove', c => { stage.cameraMove = c.id; if (logo && !userMovedCamera) frameCamera(); });
   segmented('#side-mode', 'sideMode', () => { applyMaterials(); syncColorRows(); });
   segmented('#format', 'format', syncExportOpts);
   initSize();
@@ -2369,7 +2412,11 @@ function init() {
   $('#shine').addEventListener('change', e => { state.shine = e.target.checked; stage.setShine(state.shine, state.shineGain); save(); });
   initLightPad();
   initPlaybar();
-  stage.controls.addEventListener('start', () => { userMovedCamera = true; });
+  // A click on the view starts and ends the controls without moving anything: only a real move counts.
+  let dragFrom = null;
+  stage.controls.addEventListener('start', () => { dragFrom = stage.camera.position.clone(); });
+  stage.controls.addEventListener('end', () => { if (dragFrom && dragFrom.distanceTo(stage.camera.position) > 1e-3) userMovedCamera = true; dragFrom = null; });
+  stage.controls.addEventListener('change', () => { if (dragFrom && dragFrom.distanceTo(stage.camera.position) > 1e-3) userMovedCamera = true; });
   syncDurationUI();
 
   const fileInput = $('#file');

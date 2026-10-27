@@ -72,7 +72,8 @@ export function parseProject(text) {
   return {
     name: String(p.name || 'Proyecto').slice(0, 200),
     settings: p.settings && typeof p.settings === 'object' ? p.settings : {},
-    mask: { ...DEFAULT_MASK, ...(p.mask || {}) },
+    // A project saved before 1.2 has no vectorRev: it keeps the rules it was made with.
+    mask: { ...DEFAULT_MASK, ...(p.mask || {}), vectorRev: p.mask?.vectorRev ?? 1 },
     camera: p.camera || null,
     image: { name: String(p.image.name || 'imagen').slice(0, 200), blob: base64ToBlob(data, type) },
   };
