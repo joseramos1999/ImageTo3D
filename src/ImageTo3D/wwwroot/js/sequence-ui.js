@@ -65,9 +65,10 @@ function select(options, value, label) {
 
 /**
  * Renders the panel into `container`. `change(patch)` applies a settings patch (and makes
- * the sequence the active animation); `use()` activates it without changing anything.
+ * the sequence the active animation); `use()` activates it without changing anything;
+ * `intensityOf(id)` / `setIntensity(id, v)` read and set each part's «Intensidad».
  */
-export function renderSequencePanel(container, state, { change, use }) {
+export function renderSequencePanel(container, state, { change, use, intensityOf, setIntensity }) {
   const sorted = list => list.sort((a, b) => a.label.localeCompare(b.label, 'es'));
   const optionText = a => a.pieces ? `${a.label} ▦` : a.label;
   const byKind = kind => sorted(ANIMATIONS.filter(a => a.kind === kind && (kind !== 'loop' || a.period)))
@@ -158,10 +159,14 @@ export function renderSequencePanel(container, state, { change, use }) {
     : Object.assign(el('button', 'btn small primary', 'Usar esta secuencia'), { onclick: use });
   foot.append(totalText, status);
 
+  // How far each part moves (its animation's «Intensidad», shared with the Bucle / Intro tabs).
+  const strength = part => (part && intensityOf ? [slider('seq-intensity', 'Intensidad', `Intensidad de «${part.label}»`,
+    { min: 0.25, max: 2, step: 0.05 }, intensityOf(part.id), v => v.toFixed(2) + 'x', v => setIntensity(part.id, v))] : []);
+
   container.replaceChildren(
-    slot(1, 'Intro', 'intro', introSel, tl.introSecs),
-    slot(2, 'Bucle', 'loop', loopSel, tl.mid, stepper, loopSpeed),
-    slot(3, 'Salida', 'outro', outroSel, tl.outroSecs, ...(outroHint ? [outroHint] : [])),
+    slot(1, 'Intro', 'intro', introSel, tl.introSecs, ...strength(parts.intro)),
+    slot(2, 'Bucle', 'loop', loopSel, tl.mid, stepper, loopSpeed, ...strength(parts.loop)),
+    slot(3, 'Salida', 'outro', outroSel, tl.outroSecs, ...(outroHint ? [outroHint] : []), ...strength(parts.outro)),
     bar, trans, foot,
   );
 }

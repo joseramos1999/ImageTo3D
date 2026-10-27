@@ -10,6 +10,8 @@
 // own plane, so the camera must frame the circle it sweeps, not its rectangle; `still` is
 // the loop phase shown in preset thumbnails.
 
+import { Quaternion } from 'three';
+
 const TAU = Math.PI * 2;
 const clamp01 = x => Math.max(0, Math.min(1, x));
 const easeInOut = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
@@ -988,12 +990,22 @@ export function resetPose(motion, pieces) {
 }
 
 /**
+ * «Intensidad» of each animation (×0.25 … ×2), set by the app: how far its poses move from
+ * rest. A gentler swing for a corporate video, an exaggerated bounce for TikTok.
+ */
+export const intensity = { of: () => 1 };
+
+/**
  * Poses the logo at animation time `t` (seconds, already scaled by speed).
  * `once` = true plays intros once and holds (export); false loops them (preview).
  */
 export function poseAt(anim, t, motion, pieces, once) {
+  const k = anim.id === 'none' ? 1 : intensity.of(anim.id);
+  const keepRotation = k !== 1 && spins(anim, motion, pieces);   // poses the logo itself: first
   resetPose(motion, pieces);
   const size = pieces[0]?.parent?.userData.size || { x: 4, y: 2, z: 0.4 };
+  const weight = fx.weight;
+  fx.weight = weight * k;   // the shader effects (waves, glow…) scale with it
   if (anim.kind === 'intro' || anim.kind === 'outro') {
     const span = anim.duration + INTRO_HOLD;
     const local = once ? t : ((t % span) + span) % span;
@@ -1002,6 +1014,51 @@ export function poseAt(anim, t, motion, pieces, once) {
     const p = ((t / anim.period) % 1 + 1) % 1;
     anim.apply({ m: motion, ps: pieces, p, t, size, clip: fx.clip });
   }
+  fx.weight = weight;
+  if (k !== 1) scalePose(k, keepRotation, motion, pieces);
+}
+
+const IDENTITY = new Quaternion();
+const ORIGIN = { x: 0, y: 0, z: 0 };
+
+/** Moves the pose `k` times as far from rest: position, scale and (unless it spins) rotation. */
+function scalePose(k, keepRotation, motion, pieces) {
+  const scale = (o, home) => {
+    o.position.set(home.x + (o.position.x - home.x) * k, home.y + (o.position.y - home.y) * k, home.z + (o.position.z - home.z) * k);
+    o.scale.set(Math.max(0.001, 1 + (o.scale.x - 1) * k), Math.max(0.001, 1 + (o.scale.y - 1) * k), Math.max(0.001, 1 + (o.scale.z - 1) * k));
+    // Slerp from rest extrapolates fine up to ×2 for turns well under half a revolution.
+    if (!keepRotation) o.quaternion.slerpQuaternions(IDENTITY, o.quaternion.clone(), k);
+  };
+  scale(motion, ORIGIN);
+  for (const p of pieces) scale(p, p.userData.home);
+}
+
+/**
+ * Whether an animation turns the logo (or a piece) more than 100° at some point: a spin, a flip.
+ * Its turns are whole on purpose (the loop closes, the logo faces front at the end), so the
+ * intensity leaves them alone. Found once per animation by posing it with the effects muted.
+ */
+const spinCache = new Map();
+function spins(anim, motion, pieces) {
+  if (spinCache.has(anim.id)) return spinCache.get(anim.id);
+  const saved = { ...fx };
+  for (const key of Object.keys(fx)) if (typeof fx[key] === 'function') fx[key] = () => {};
+  const size = pieces[0]?.parent?.userData.size || { x: 4, y: 2, z: 0.4 };
+  const angle = o => 2 * Math.acos(Math.min(1, Math.abs(o.quaternion.w)));
+  let max = 0;
+  try {
+    for (let i = 0; i <= 32; i++) {
+      resetPose(motion, pieces);
+      const u = i / 32;
+      anim.apply({ m: motion, ps: pieces, q: u, p: u % 1, t: u * (anim.period || anim.duration || 1), size, clip: fx.clip });
+      max = Math.max(max, angle(motion), ...pieces.map(angle));
+    }
+  } finally {
+    Object.assign(fx, saved);
+  }
+  const result = max > deg(100);
+  spinCache.set(anim.id, result);
+  return result;
 }
 
 const smoothstep01 = x => { const c = clamp01(x); return c * c * (3 - 2 * c); };

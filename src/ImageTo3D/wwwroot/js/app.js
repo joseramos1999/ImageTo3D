@@ -9,7 +9,7 @@ import { initMaskEditor } from './mask-editor.js';
 import { store } from './store.js';
 import { History, workSettings, serializeProject, readProjectFile, PROJECT_EXT } from './project.js';
 import { MATERIALS, BEVEL_MATERIALS, createMaterials, disposeMaterials, materialBase } from './materials.js';
-import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, migrateAnimationSettings } from './animations.js';
+import { ANIMATIONS, getAnimation, poseAt, fitLoop, resetPose, stillTime, fx, intensity, migrateAnimationSettings } from './animations.js';
 import { renderSequencePanel, sequenceParts, sequenceTimeline } from './sequence-ui.js';
 import { initUpdates } from './update-ui.js';
 import { PRESETS, matchesPreset } from './presets.js';
@@ -35,7 +35,7 @@ const $ = sel => document.querySelector(sel);
 const DEFAULTS = {
   depth: 0.4, bevel: 0.03, smooth: 2, scale: 1,
   material: 'logo', color: '#c8f55a', sideMode: 'logo', sideColor: '#1c1c24', bevelMat: 'side', bevelColor: '#ffd36b', tune: {},
-  anim: 'rotate-y', animTab: 'preset', speed: 1,
+  anim: 'rotate-y', animTab: 'preset', speed: 1, intensity: {},
   keys: structuredClone(DEFAULT_KEYS),
   mode: 'single', seqIntro: 'intro-pop', seqLoop: 'rotate-y', seqReps: 2, seqOutro: 'outro-shrink', seqTransition: 0.6, seqLoopSpeed: 1,
   lighting: 'studio', lightGain: 1, env: 'studio', envSpin: false, floor: 'shadow', bg: 'vignette', camMove: 'none', camAmount: 1,
@@ -1430,15 +1430,52 @@ function syncColorRows() {
   $('#bevel-color').hidden = state.bevelMat !== 'color' && state.bevelMat !== 'neon';
 }
 
+// ───────── «Intensidad» of each animation ─────────
+// state.intensity[animId]: ×0.25 … ×2 (animations.js scales its poses). The slider under the
+// chips edits the selected animation's; the sequence panel has one per part.
+const intensityOf = id => state.intensity?.[id] ?? 1;
+intensity.of = intensityOf;
+
+function setIntensity(id, v) {
+  state.intensity = { ...(state.intensity || {}), [id]: v };
+  if (Math.abs(v - 1) < 1e-6) delete state.intensity[id];
+  if (logo && !userMovedCamera) frameCamera();   // a bigger motion may need more room
+  save();
+}
+
+function initIntensity() {
+  const el = $('#anim-intensity');
+  el.innerHTML = `<div class="lbl"><span>Intensidad <span class="hint-inline">cuánto se mueve</span></span><span></span></div>
+    <input type="range" min="0.25" max="2" step="0.05" aria-label="Intensidad de la animación">`;
+  const input = el.querySelector('input'), out = el.querySelector('.lbl > span:last-child');
+  const paint = () => { input.style.setProperty('--p', ((input.value - 0.25) / 1.75 * 100) + '%'); out.textContent = Number(input.value).toFixed(2) + 'x'; };
+  input.addEventListener('input', () => { paint(); setIntensity(state.anim, Number(input.value)); });
+  input.addEventListener('dblclick', () => { input.value = 1; paint(); setIntensity(state.anim, 1); });
+  syncIntensity.input = input;
+  syncIntensity.paint = paint;
+}
+
+/** The slider shows the selected single animation's intensity (loop and intro tabs only). */
+function syncIntensity() {
+  const el = $('#anim-intensity'), input = syncIntensity.input;
+  el.hidden = !(state.animTab === 'loop' || state.animTab === 'intro') || state.anim === 'none';
+  if (!input || el.hidden) return;
+  input.value = String(intensityOf(state.anim));
+  syncIntensity.paint();
+}
+
 function renderAnimationList() {
   const el = $('#animations');
   el.classList.toggle('presets', state.animTab === 'preset');
   el.classList.toggle('seq', state.animTab === 'seq');
   syncModeMarks();
+  syncIntensity();
   if (state.animTab === 'preset') { renderPresets(); return; }
   if (state.animTab === 'seq') {
     renderSequencePanel(el, state, {
       change: patch => { Object.assign(state, patch); useSequence(); },
+      intensityOf,
+      setIntensity: (id, v) => { setIntensity(id, v); renderAnimationList(); },
       use: useSequence,
     });
     return;
@@ -1456,6 +1493,7 @@ function renderAnimationList() {
   chips('#animations', ANIMATIONS.filter(a => a.kind === state.animTab || a.id === 'none'), 'anim', a => {
     state.mode = 'single';   // picking a single animation leaves the sequence
     onAnimationChanged();
+    syncIntensity();
   }, a => a.pieces ? `${a.label}<span class="pc" title="Anima cada pieza por separado">▦</span>` : a.label);
 }
 
@@ -1579,7 +1617,7 @@ function renderPresets() {
 }
 
 function applyPreset(p) {
-  Object.assign(state, p.set, { tune: {} });
+  Object.assign(state, p.set, { tune: {}, intensity: {} });
   play.t = 0;
   applySceneToEngine();
   syncSceneUI();
@@ -1809,7 +1847,7 @@ async function renderTemplateThumbs() {
 }
 
 function applyTemplate(t) {
-  const patch = { ...t.set, tune: {} };
+  const patch = { ...t.set, tune: {}, intensity: {} };
   applySettings({ ...state, ...patch });
   state.format = patch.format ?? state.format;      // not a work setting: applySettings leaves it
   // Show what the template set: its sequence, or the tab of its animation.
@@ -2082,6 +2120,7 @@ function init() {
   maskUI = initMaskUI({ getSource: () => source, isVector: usingVector, commit: commitMask, openEditor: () => maskEditor.open() });
   initMaterials();
   initTune();
+  initIntensity();
   initAnimations();
   initBackgrounds();
   chips('#lighting', LIGHTING, 'lighting', l => stage.setLighting(l.id, state.lightGain));
