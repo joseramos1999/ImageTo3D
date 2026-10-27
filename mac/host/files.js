@@ -11,7 +11,7 @@ const path = require('path');
 const FILTERS = {
   mp4: ['Vídeo MP4', ['mp4']], webm: ['Vídeo WebM', ['webm']], mov: ['Vídeo QuickTime', ['mov']], avi: ['Vídeo AVI', ['avi']],
   zip: ['Secuencia PNG (ZIP)', ['zip']], png: ['Imagen PNG', ['png']], glb: ['Modelo GLB', ['glb']],
-  stl: ['Modelo STL', ['stl']], i3d: ['Proyecto ImageTo3D', ['i3d']],
+  stl: ['Modelo STL', ['stl']], i3d: ['Proyecto ImageTo3D', ['i3d']], i3dlook: ['Look de ImageTo3D', ['i3dlook']],
 };
 const filtersFor = ext => (FILTERS[ext] ? [{ name: FILTERS[ext][0], extensions: FILTERS[ext][1] }] : []);
 const folderFor = ext => app.getPath(['mp4', 'webm', 'mov', 'avi', 'zip'].includes(ext) ? 'videos' : ext === 'png' ? 'pictures' : 'documents');

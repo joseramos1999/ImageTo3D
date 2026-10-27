@@ -27,6 +27,7 @@ import { keysTimeline, DEFAULT_KEYS } from './keys.js';
 import { renderKeysPanel } from './keys-ui.js';
 import { buildPrint } from './print.js';
 import { TEMPLATES } from './templates.js';
+import { LOOK_EXT, NAME_MAX, lookFromState, lookSettings, matchesLook, serializeLook, readLookFile } from './looks.js';
 import { DEFAULT_RELIEF } from './relief.js';
 
 const $ = sel => document.querySelector(sel);
@@ -551,6 +552,7 @@ function applyMaterials() {
 async function openFile(file) {
   openGeneration++;
   if (file?.name?.toLowerCase().endsWith('.' + PROJECT_EXT)) return openProjectFile(file);
+  if (file?.name?.toLowerCase().endsWith('.' + LOOK_EXT)) return importLook(file);
   if (!file || !file.type.startsWith('image/')) { toast('Ese archivo no es una imagen.', 'error'); return; }
   let decoded;
   try {
@@ -1600,25 +1602,157 @@ function initAnimations() {
 const thumbs = new Map();   // preset id → data URL rendered with the current logo
 let thumbsJob = 0;
 
+// ───────── «Mis looks» (looks.js) ─────────
+// Saved in IndexedDB, listed before the built-in presets with thumbnails of the user's logo,
+// applied like a preset, renamed, exported / imported as .i3dlook and offered in the batch.
+let myLooks = [];   // { id, name, createdAt, set }
+const lookItems = () => myLooks.map(l => ({ id: 'look:' + l.id, label: l.name, set: lookSettings(l.set), look: l }));
+const presetItems = () => [...lookItems(), ...PRESETS];
+const itemMatches = item => (item.look ? matchesLook(item.look.set, state) : matchesPreset(item, state));
+
+async function loadLooks() {
+  try { myLooks = await store.looks(); } catch { myLooks = []; }
+  if (state.animTab === 'preset') renderPresets();
+}
+
+async function saveLook(name) {
+  const look = { id: crypto.randomUUID(), name: name.slice(0, NAME_MAX), createdAt: Date.now(), set: lookFromState(state) };
+  try { await store.putLook(look); } catch { toast('No se pudo guardar el look.', 'error'); return; }
+  myLooks.push(look);
+  renderPresets();
+  toast(`Look «${look.name}» guardado: está el primero en Predeterminadas.`);
+}
+
+async function updateLook(look, patch) {
+  Object.assign(look, patch);
+  try { await store.putLook(look); } catch { toast('No se pudo guardar el look.', 'error'); }
+  renderPresets();
+}
+
+async function deleteLook(look) {
+  try { await store.removeLook(look.id); } catch { /* gone anyway from the list */ }
+  myLooks = myLooks.filter(l => l !== look);
+  thumbs.delete('look:' + look.id);
+  renderPresets();
+  toast(`Look «${look.name}» borrado.`, 'info', { label: 'Deshacer', run: async () => { await store.putLook(look); myLooks.push(look); myLooks.sort((a, b) => a.createdAt - b.createdAt); renderPresets(); } });
+}
+
+function exportLook(look) {
+  const base = look.name.replace(/[\\/:*?"<>|«»]+/g, '').trim() || 'look';
+  download(new Blob([serializeLook(look.name, look.set)], { type: 'application/json' }), `${base}.${LOOK_EXT}`);
+}
+
+async function importLook(file) {
+  try {
+    const { name, set } = await readLookFile(file);
+    const look = { id: crypto.randomUUID(), name, createdAt: Date.now(), set };
+    await store.putLook(look);
+    myLooks.push(look);
+    state.animTab = 'preset';
+    segSyncs.forEach(fn => fn());
+    renderAnimationList();
+    toast(`Look «${name}» importado.`, 'info', { label: 'Aplicarlo', run: () => applyPreset(lookItems().find(i => i.look === look)) });
+  } catch (e) {
+    toast(e.message || 'No se pudo importar el look.', 'error');
+  }
+}
+
+/** A name box in place of a card's name (new look, rename): Enter keeps it, Escape cancels. */
+function nameField(initial, done) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'look-name';
+  input.maxLength = NAME_MAX;
+  input.value = initial;
+  input.setAttribute('aria-label', 'Nombre del look');
+  let finished = false;
+  const finish = ok => { if (finished) return; finished = true; done(ok ? input.value.trim() : null); };
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', e => e.stopPropagation());
+  return input;
+}
+
 function renderPresets() {
   const el = $('#animations');
   el.innerHTML = '';
-  PRESETS.forEach(p => {
+  // Tools: save the current look, import one.
+  const tools = document.createElement('div');
+  tools.className = 'preset-tools';
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'btn small';
+  add.textContent = '＋ Guardar look';
+  add.title = 'Guarda la escena, el material y la animación actuales como un look tuyo';
+  add.onclick = () => {
+    const field = nameField(`Mi look ${myLooks.length + 1}`, name => { if (name) saveLook(name); else renderPresets(); });
+    tools.replaceChildren(field);
+    field.focus();
+    field.select();
+  };
+  const imp = document.createElement('button');
+  imp.type = 'button';
+  imp.className = 'btn small';
+  imp.textContent = 'Importar…';
+  imp.title = `Añade un look de un archivo .${LOOK_EXT}`;
+  imp.onclick = () => $('#look-file').click();
+  tools.append(add, imp);
+  el.appendChild(tools);
+
+  for (const p of presetItems()) {
+    const wrap = document.createElement('div');
+    wrap.className = 'preset-wrap';
     const card = document.createElement('button');
-    const picked = matchesPreset(p, state);
+    const picked = itemMatches(p);
     card.type = 'button';
-    card.className = 'preset' + (picked ? ' on' : '');
+    card.className = 'preset' + (picked ? ' on' : '') + (p.look ? ' mine' : '');
     card.dataset.id = p.id;
     card.setAttribute('aria-pressed', String(picked));
-    card.innerHTML = `<span class="thumb">${thumbs.has(p.id) ? `<img src="${thumbs.get(p.id)}" alt="">` : ''}</span><span class="name">${p.label}</span>`;
+    const thumb = document.createElement('span');
+    thumb.className = 'thumb';
+    if (thumbs.has(p.id)) { const img = document.createElement('img'); img.src = thumbs.get(p.id); img.alt = ''; thumb.append(img); }
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = p.label;   // a look's name is the user's text: never parsed as HTML
+    card.append(thumb, name);
     card.onclick = () => applyPreset(p);
-    el.appendChild(card);
-  });
-  if (thumbs.size < PRESETS.length) renderThumbs();
+    wrap.append(card);
+    if (p.look) {
+      const look = p.look, actions = document.createElement('div');
+      actions.className = 'look-actions';
+      for (const [icon, label, run] of [
+        ['✎', 'Cambiar el nombre', () => {
+          const field = nameField(look.name, v => { if (v && v !== look.name) updateLook(look, { name: v.slice(0, NAME_MAX) }); else renderPresets(); });
+          name.replaceWith(field);
+          field.focus();
+          field.select();
+        }],
+        ['⤓', `Exportar como .${LOOK_EXT}`, () => exportLook(look)],
+        ['✕', 'Borrar este look', () => deleteLook(look)],
+      ]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn icon small';
+        b.textContent = icon;
+        b.title = label;
+        b.setAttribute('aria-label', `${label}: ${look.name}`);
+        b.onclick = e => { e.stopPropagation(); run(); };
+        actions.append(b);
+      }
+      wrap.append(actions);
+    }
+    el.appendChild(wrap);
+  }
+  if (presetItems().some(p => !thumbs.has(p.id))) renderThumbs();
 }
 
 function applyPreset(p) {
-  Object.assign(state, p.set, { tune: {}, intensity: {} });
+  // A look carries its own tuning and intensities; a built-in preset starts from none.
+  Object.assign(state, { tune: {}, intensity: {} }, p.set);
   play.t = 0;
   applySceneToEngine();
   syncSceneUI();
@@ -1638,7 +1772,8 @@ function openBatch() {
   if (exporting) return;
   const sel = $('#bt-apply'), keep = sel.value;
   sel.replaceChildren(new Option('Los ajustes actuales', 'current'));
-  for (const [label, items, prefix] of [['Predeterminados', PRESETS, 'preset:'], ['Plantillas', TEMPLATES, 'template:']]) {
+  for (const [label, items, prefix] of [['Mis looks', lookItems(), ''], ['Predeterminados', PRESETS, 'preset:'], ['Plantillas', TEMPLATES, 'template:']]) {
+    if (!items.length) continue;
     const g = document.createElement('optgroup');
     g.label = label;
     items.forEach(x => g.append(new Option(x.label, prefix + x.id)));
@@ -1653,6 +1788,7 @@ function openBatch() {
 
 function batchChoice() {
   const v = $('#bt-apply').value;
+  if (v.startsWith('look:')) return lookItems().find(p => p.id === v) || null;
   if (v.startsWith('preset:')) return PRESETS.find(p => 'preset:' + p.id === v) || null;
   if (v.startsWith('template:')) return TEMPLATES.find(t => 'template:' + t.id === v) || null;
   return null;
@@ -1880,7 +2016,8 @@ function syncSceneUI() {
   markPicked($('#cameras'), state.camMove);
   markPicked($('#backgrounds'), state.bg);
   if (state.animTab === 'preset') document.querySelectorAll('#animations .preset').forEach(card => {
-    const on = matchesPreset(PRESETS.find(p => p.id === card.dataset.id), state);
+    const item = presetItems().find(p => p.id === card.dataset.id);
+    const on = !!item && itemMatches(item);
     card.classList.toggle('on', on);
     card.setAttribute('aria-pressed', String(on));
   });
@@ -1910,14 +2047,14 @@ function invalidateThumbs() {
  */
 async function renderThumbs() {
   const job = ++thumbsJob;
-  for (const p of PRESETS) {
+  for (const p of presetItems()) {
     await new Promise(r => setTimeout(r, 0));
     if (job !== thumbsJob || !logo) return;
     if (thumbs.has(p.id) || exporting) continue;
 
     const saved = { ...state };
     const cam = stage.camera.position.clone(), target = stage.controls.target.clone();
-    Object.assign(state, p.set);
+    Object.assign(state, { tune: {}, intensity: {} }, p.set);
     applySceneToEngine();
     const restore = stage.beginFixedSize(320, 180);
     stage.frame();
@@ -2123,6 +2260,8 @@ function init() {
   initTune();
   initIntensity();
   initAnimations();
+  loadLooks();
+  $('#look-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) importLook(f); };
   initBackgrounds();
   chips('#lighting', LIGHTING, 'lighting', l => stage.setLighting(l.id, state.lightGain));
   chips('#environments', ENVIRONMENTS, 'env', e => stage.setEnvironment(e.id, state.color));

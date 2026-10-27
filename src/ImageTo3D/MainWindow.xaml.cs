@@ -549,6 +549,7 @@ public partial class MainWindow : Window
         "glb" => "Modelo glTF binario (*.glb)|*.glb",
         "stl" => "Modelo STL (*.stl)|*.stl",
         "i3d" => "Proyecto ImageTo3D (*.i3d)|*.i3d",
+        "i3dlook" => "Look de ImageTo3D (*.i3dlook)|*.i3dlook",
         "zip" => "Secuencia PNG en ZIP (*.zip)|*.zip",
         _ => "Todos los archivos (*.*)|*.*",
     };
