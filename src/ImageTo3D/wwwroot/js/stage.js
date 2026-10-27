@@ -352,6 +352,11 @@ export class Stage {
 
   /** Places the camera so the logo fills the frame comfortably. */
   frame(round = false) {
+    // A glide still dying out from the user's last drag would carry on from the new framing.
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update();
+    this.controls.enableDamping = damping;
     this.camera.position.copy(this.framePosition(round));
     this.controls.target.set(0, 0, 0);
     this.controls.update();
@@ -450,15 +455,16 @@ export class Stage {
    */
   setEnvironment(id, color = '#ffffff') {
     const key = id === 'brand' ? id + color : id;
-    let tex = this.envMaps.get(key);
-    if (tex) this.envMaps.delete(key);
+    let rt = this.envMaps.get(key);
+    if (rt) this.envMaps.delete(key);
     else {
       const { scene, sigma } = environmentScene(id, color);
-      tex = this.pmrem.fromScene(scene, sigma).texture;
+      rt = this.pmrem.fromScene(scene, sigma);
       disposeEnvironmentScene(scene);
     }
-    this.envMaps.set(key, tex);
-    // A handful is plenty (each is a few MB of GPU memory); the oldest goes.
+    this.envMaps.set(key, rt);
+    const tex = rt.texture;
+    // A handful is plenty (each is a few MB of GPU memory); the oldest goes, render target and all.
     while (this.envMaps.size > 6) {
       const [oldKey, old] = this.envMaps.entries().next().value;
       this.envMaps.delete(oldKey);
@@ -609,7 +615,9 @@ export class Stage {
           .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDepthT = aDepthT;');
         shader.fragmentShader = shader.fragmentShader
           .replace('#include <common>', '#include <common>\nuniform vec3 uGradTo;\nvarying float vDepthT;')
-          .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uGradTo, smoothstep(0.0, 1.0, vDepthT));');
+          .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uGradTo, smoothstep(0.0, 1.0, vDepthT));')
+          // A glowing material (neon) glows in the gradient's colour too, as bright as before.
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\nfloat gradE = max(totalEmissiveRadiance.r, max(totalEmissiveRadiance.g, totalEmissiveRadiance.b));\ntotalEmissiveRadiance = mix(totalEmissiveRadiance, uGradTo * gradE, smoothstep(0.0, 1.0, vDepthT));');
       }
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vShineWorld;')

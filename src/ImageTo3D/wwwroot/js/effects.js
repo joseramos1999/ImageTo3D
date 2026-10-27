@@ -152,6 +152,8 @@ export class Effects {
     const v = this.opacityWanted;
     if (v == null && !this.opacityApplied) return;
     const fading = v != null && v < 1;
+    // A shadow cannot fade with the logo: it goes when the logo is more gone than there.
+    for (const piece of logo.children) piece.castShadow = v == null || v >= 0.5;
     const seen = new Set();
     for (const piece of logo.children) {
       for (const m of Array.isArray(piece.material) ? piece.material : [piece.material]) {

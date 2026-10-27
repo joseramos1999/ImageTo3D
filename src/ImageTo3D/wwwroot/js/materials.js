@@ -145,7 +145,8 @@ export function createMaterials(id, opts) {
   if (opts.tune && Object.keys(opts.tune).length) {
     const same = side === face;
     face = tuneMaterial(face, opts.tune);
-    side = same ? face : tuneMaterial(side, opts.tune);
+    // A colour picked for the sides is that colour: the tint is the face's.
+    side = same ? face : tuneMaterial(side, opts.sideMode === 'custom' ? { ...opts.tune, tint: undefined } : opts.tune);
   }
   // «Colores del logo» makes its own coloured sides; any other material gets them here, in its
   // own finish (a gold face with black walls stays metal).
@@ -166,8 +167,10 @@ export function createMaterials(id, opts) {
 export function materialBase(id) {
   const mats = createMaterials(id, { color: '#ffffff', sideColor: '#ffffff', sideMode: 'logo' }), m = mats[0];
   const base = {
-    roughness: m.roughness ?? null, metalness: m.metalness ?? null, clearcoat: m.isMeshPhysicalMaterial ? m.clearcoat : 0,
-    emissive: m.emissive && m.emissive.getHex() !== 0 ? m.emissiveIntensity : 0,
+    // null: the material has no such property (Wireframe is unlit), so its slider is hidden.
+    roughness: m.roughness ?? null, metalness: m.metalness ?? null,
+    clearcoat: m.isMeshStandardMaterial ? (m.isMeshPhysicalMaterial ? m.clearcoat : 0) : null,
+    emissive: m.emissive ? (m.emissive.getHex() !== 0 ? m.emissiveIntensity : 0) : null,
   };
   disposeMaterials(mats);
   return base;

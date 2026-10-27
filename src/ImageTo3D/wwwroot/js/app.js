@@ -47,7 +47,9 @@ const DEFAULTS = {
   glbAnim: true, glbCamera: true,
 };
 /** Settings from older versions (sizes, chained intro / outro) brought up to date. */
-const migrate = s => migrateAnimationSettings(migrateSettings(s));
+/** Before 1.2, «Laterales: Color» only applied to «Colores del logo» (and there was no «Bisel»). */
+const migrateSides = s => (s && s.bevelMat === undefined && s.sideMode === 'custom' && s.material && s.material !== 'logo' ? { ...s, sideMode: 'logo' } : s);
+const migrate = s => migrateSides(migrateAnimationSettings(migrateSettings(s)));
 const STORE_KEY = 'imageto3d.settings.v1';
 const state = { ...DEFAULTS };
 try { Object.assign(state, migrate(JSON.parse(localStorage.getItem(STORE_KEY) || '{}'))); } catch { /* fresh start */ }
@@ -530,7 +532,8 @@ function applyMaterials() {
     const key = id + color;
     if (sets.has(key)) return sets.get(key);
     // As dim as the textured walls are (×0.72), so a layered logo reads the same.
-    const sides = state.sideMode === 'logo' && id === 'logo' ? { sideMode: 'custom', sideColor: '#' + new THREE.Color(color).multiplyScalar(0.72).getHexString() } : {};
+    const flat = id === 'logo' && state.sideMode !== 'custom';
+    const sides = flat ? { sideMode: 'custom', sideColor: '#' + new THREE.Color(color).multiplyScalar(0.72).getHexString() } : {};
     const mats = createMaterials(id, { ...opts, ...sides, ...(layerStyleOf(layer).material ? { color } : {}), tune: tuneOf(id) });
     if (id === 'logo' && !info.gradient) {
       const m = mats[0], tint = tuneOf(id).tint;
@@ -540,6 +543,7 @@ function applyMaterials() {
       if (m.emissiveMap) { m.emissiveMap = null; m.emissive.copy(m.color); }
       m.needsUpdate = true;
     }
+    if (flat && state.sideMode === 'gradient') mats[1].userData.gradTo = new THREE.Color(state.sideColor);
     sets.set(key, mats);
     return mats;
   };
@@ -670,7 +674,7 @@ function setPlaying(on) {
 /** Moves the playhead to a frame (the export's own instants, t = i / fps) and pauses. */
 function stepFrames(n) {
   setPlaying(false);
-  const N = frameCount(), f = Math.round(play.t * fpsNow());
+  const N = frameCount(), f = Math.floor(play.t * fpsNow() + 1e-6);
   play.t = (((f + n) % N) + N) % N / fpsNow();
 }
 
@@ -826,7 +830,9 @@ async function runExport(out = null) {
   const deliver = (blob, name) => (out?.save ? out.save(blob, nameFor(name)) : download(blob, name));
   try {
     if (fmt === 'glb') {
-      const r = await exportGLB(logo, state.scale, state.glbAnim ? glbAnimation() : null);
+      exporting = true;   // the preview waits: the exporter borrows the live geometry
+      let r;
+      try { r = await exportGLB(logo, state.scale, state.glbAnim ? glbAnimation() : null); } finally { exporting = false; }
       await deliver(r.blob, r.filename);
       if (state.glbAnim && !out) toast(r.tracks ? `GLB animado: ${r.frames} fotogramas, ${r.tracks} pistas${state.glbCamera ? ' (con cámara)' : ''}.` : 'La animación actual no mueve el logo: el GLB va sin pistas.');
       return 'ok';
@@ -861,7 +867,7 @@ async function runExport(out = null) {
         const r = await exportPNG({
           canvas, width: w, height: h,
           // The frame under the playhead, with the camera and light of that instant.
-          renderFrame: () => stage.render(posePreview()),
+          renderFrame: () => stage.render(posePreview(out?.t ?? play.t)),
         });
         await deliver(r.blob, r.filename);
         return 'ok';
@@ -1192,8 +1198,8 @@ async function toggleRecentMenu(open) {
 }
 
 /** Keys for the playback bar: not while typing, on a slider or select, or in a dialog. */
-const playbackKeysFor = e => !e.ctrlKey && !e.metaKey && !e.altKey &&
-  !e.target.closest?.('input, select, textarea, [role=slider]:not(#pb-track)') &&
+const TYPING = 'input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=button]), select, textarea, [contenteditable]';
+const playbackKeysFor = e => !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.(TYPING) &&
   !document.querySelector('.modal:not([hidden])');
 
 function initShortcuts() {
@@ -1203,7 +1209,7 @@ function initShortcuts() {
       // Space plays / pauses even with a button focused (that button is not pressed).
       if (e.key === ' ') { e.preventDefault(); if (!e.repeat) setPlaying(!play.playing); return; }
       if (e.key === 'g' || e.key === 'G') { e.preventDefault(); cycleGuides(); return; }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.target.closest?.('input[type=range], [role=slider]:not(#pb-track)')) {
         e.preventDefault();
         stepFrames((e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1));
         return;
@@ -1410,7 +1416,7 @@ function syncTuneUI() {
   const base = tuneBase(state.material), t = tuneOf(state.material);
   for (const s of TUNE_SLIDERS) {
     const row = tuneRows[s.key], v = t[s.key] ?? base[s.key];
-    row.el.hidden = v == null || (s.key === 'clearcoat' && state.material === 'wire');
+    row.el.hidden = v == null;
     if (v == null) continue;
     row.input.value = String(v);
     row.paint();
@@ -1423,7 +1429,10 @@ function syncTuneUI() {
 
 function syncColorRows() {
   const m = MATERIALS.find(x => x.id === state.material);
-  $('#color-row').hidden = !m?.tint;
+  $('#color-row').hidden = !m?.tint && state.env !== 'brand';
+  $('#color-row label').textContent = m?.tint ? 'Color' : 'Color de marca';
+  $('#color').value = state.color;
+  $('#side-color').value = state.sideColor;
   syncTuneUI();
   $('#side-mode [data-v=logo]').textContent = state.material === 'logo' ? 'Del logo' : 'Del material';
   $('#side-color').hidden = state.sideMode === 'logo';
@@ -1506,8 +1515,16 @@ function renderAnimationList() {
  * framing, so at the key's instant the clip shows exactly what was captured.
  */
 function captureCamera() {
-  const rad = THREE.MathUtils.radToDeg;
-  const now = new THREE.Spherical().setFromVector3(stage.camera.position.clone().sub(stage.controls.target));
+  const rad = THREE.MathUtils.radToDeg, cam = stage.camera;
+  // The keys are relative to the keyframes' own framing, whatever was in use before.
+  state.mode = 'keys';
+  // What the viewport shows: the user's camera plus the keyed camera at the playhead.
+  const saved = { p: cam.position.clone(), q: cam.quaternion.clone() };
+  posePreview();
+  if (stage.fx.cameraWanted) stage.applyCameraKeys(stage.fx.cameraWanted);
+  const now = new THREE.Spherical().setFromVector3(cam.position.clone().sub(stage.controls.target));
+  cam.position.copy(saved.p);
+  cam.quaternion.copy(saved.q);
   frameCamera();
   const base = new THREE.Spherical().setFromVector3(stage.camera.position.clone().sub(stage.controls.target));
   const wrap = a => ((a + 180) % 360 + 360) % 360 - 180;
@@ -1521,22 +1538,25 @@ function captureCamera() {
 
 /** Makes the keyframes the active animation (after any change in their panel). */
 function useKeys() {
+  const editing = state.mode === 'keys';
   state.mode = 'keys';
-  onAnimationChanged();
+  onAnimationChanged(editing);
   if (state.animTab === 'keys') renderAnimationList();
   save();
 }
 
 /** Makes the "Secuencia" the active animation (after any change in its panel). */
 function useSequence() {
+  const editing = state.mode === 'sequence';
   state.mode = 'sequence';
-  onAnimationChanged();
+  onAnimationChanged(editing);
   if (state.animTab === 'seq') renderAnimationList();
   save();
 }
 
-function onAnimationChanged() {
-  play.t = 0;
+/** `keepTime`: an edit of the animation in use (keyframes, sequence) keeps the playhead. */
+function onAnimationChanged(keepTime = false) {
+  if (!keepTime) play.t = 0;
   // The new animation is framed whole, unless the user has placed the camera by hand.
   if (logo && !userMovedCamera) frameCamera();
   updateFloorForAnim();
@@ -1608,7 +1628,8 @@ let thumbsJob = 0;
 let myLooks = [];   // { id, name, createdAt, set }
 const lookItems = () => myLooks.map(l => ({ id: 'look:' + l.id, label: l.name, set: lookSettings(l.set), look: l }));
 const presetItems = () => [...lookItems(), ...PRESETS];
-const itemMatches = item => (item.look ? matchesLook(item.look.set, state) : matchesPreset(item, state));
+const untuned = () => !Object.keys(state.tune || {}).length && !Object.keys(state.intensity || {}).length;
+const itemMatches = item => (item.look ? matchesLook(item.look.set, state) : matchesPreset(item, state) && untuned());
 
 async function loadLooks() {
   try { myLooks = await store.looks(); } catch { myLooks = []; }
@@ -1847,8 +1868,11 @@ async function runBatch() {
     source: source && { name: source.name, blob: source.blob, mask: structuredClone(source.mask), storedAs: source.storedAs },
   };
   const choice = batchChoice();
+  // The playhead holds still for the batch; a PNG is taken at a fixed instant (see stillInstant).
+  const savedPlay = { t: play.t, playing: play.playing };
+  setPlaying(false);
   if (choice) {
-    applySettings({ ...state, ...choice.set });
+    applySettings({ ...state, tune: {}, intensity: {}, ...choice.set });
     state.format = choice.set.format ?? state.format;
     syncExportOpts();
     onAnimationChanged();
@@ -1875,6 +1899,7 @@ async function runBatch() {
       const base = item.file.name.replace(/\.[^.]+$/, '') || 'logo';
       const r = await runExport({
         fileName: ext => `${base}.${ext}`,
+        t: stillInstant(choice, savedPlay),
         open: host.isDesktop
           ? async name => {
             const sink = await openSinkIn(batch.folder, name);
@@ -1917,12 +1942,32 @@ async function runBatch() {
   segSyncs.forEach(fn => fn());
   syncExportOpts();
   onAnimationChanged();
+  play.t = savedPlay.t;
+  setPlaying(savedPlay.playing);
   renderAnimationList();
   batching = false;
   batch.running = false;
   $('#bt-status').textContent = batch.cancel ? `Cancelado: ${done} hecho${done === 1 ? '' : 's'}.` : `Terminado: ${done} hecho${done === 1 ? '' : 's'}${failed ? `, ${failed} con error` : ''}.`;
   renderBatch();
   toast(`Lote: ${done} de ${queue.length} exportado${queue.length === 1 ? '' : 's'}${failed ? `, ${failed} con error` : ''}${host.isDesktop && done ? ` en ${batch.folder}` : ''}.`);
+}
+
+/**
+ * The instant a batch takes its PNGs at: the user's own (paused) playhead when the current
+ * settings are kept, else the logo at rest — the end of the intro, or the start of a loop.
+ */
+function stillInstant(choice, savedPlay) {
+  const last = (frameCount() - 1) / fpsNow();
+  if (!choice && !savedPlay.playing) return Math.min(savedPlay.t, last);
+  const tl = currentTimeline();
+  let t = 0;
+  if (tl?.kind === 'keys') t = savedPlay.t;
+  else if (tl) t = tl.introSecs;
+  else {
+    const anim = getAnimation(state.anim);
+    if (anim.kind === 'intro') t = anim.duration / state.speed;
+  }
+  return Math.min(t, last);
 }
 
 // ───────── templates ─────────
@@ -1964,7 +2009,7 @@ async function renderTemplateThumbs() {
     if (templateThumbs.has(t.id)) continue;
     const saved = { ...state };
     const cam = stage.camera.position.clone(), target = stage.controls.target.clone();
-    Object.assign(state, t.set);
+    Object.assign(state, { tune: {}, intensity: {} }, t.set);
     applySceneToEngine();
     const restore = stage.beginFixedSize(384, 216);
     stage.frame();
@@ -2222,6 +2267,7 @@ function initDragDrop() {
     if (file) openFile(file);
   });
   window.addEventListener('paste', e => {
+    if (batch.running || document.querySelector('.modal:not([hidden])')) return;
     const file = [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
     if (file) { openFile(file); return; }
     // An SVG copied as code (Figma «Copy as SVG», Illustrator, icon sites) arrives as text;
@@ -2264,7 +2310,7 @@ function init() {
   $('#look-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) importLook(f); };
   initBackgrounds();
   chips('#lighting', LIGHTING, 'lighting', l => stage.setLighting(l.id, state.lightGain));
-  chips('#environments', ENVIRONMENTS, 'env', e => stage.setEnvironment(e.id, state.color));
+  chips('#environments', ENVIRONMENTS, 'env', e => { stage.setEnvironment(e.id, state.color); syncColorRows(); });
   $('#env-spin').checked = !!state.envSpin;
   $('#env-spin').addEventListener('change', e => { state.envSpin = e.target.checked; stage.envSpin = state.envSpin; save(); });
   chips('#floors', FLOORS, 'floor', f => stage.setFloor(f.id));

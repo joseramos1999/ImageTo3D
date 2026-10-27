@@ -193,7 +193,11 @@ function flattenCaps(geo) {
   const caps = geo.groups.find(g => g.materialIndex === 0);
   if (!caps) return;
   const pos = geo.attributes.position, nrm = geo.attributes.normal;
-  for (let i = caps.start; i < caps.start + caps.count; i++) nrm.setXYZ(i, 0, 0, pos.getZ(i) > 0 ? 1 : -1);
+  // Front or back by the caps' own middle (a thin layer pushed back can have its front below z = 0).
+  let lo = Infinity, hi = -Infinity;
+  for (let i = caps.start; i < caps.start + caps.count; i++) { const z = pos.getZ(i); lo = Math.min(lo, z); hi = Math.max(hi, z); }
+  const mid = (lo + hi) / 2;
+  for (let i = caps.start; i < caps.start + caps.count; i++) nrm.setXYZ(i, 0, 0, pos.getZ(i) > mid ? 1 : -1);
   nrm.needsUpdate = true;
 }
 
