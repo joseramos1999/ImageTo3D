@@ -29,6 +29,7 @@ En el Mac también avisa de las versiones nuevas, pero no se actualiza sola (sin
 
 ## Qué hace
 
+- **Texto 3D:** escribe un texto y elige entre 84 fuentes incluidas en la app (iguales en Windows y Mac, sin instalar nada), en 13 estilos: gruesas, estrechas, redondeadas, futuristas, con serifa, slab y western, divertidas, retro y art déco, caligrafía, rotulador y grafiti, góticas y terror, plantilla y militar, y píxel y código. El selector muestra tu texto en cada fuente, con buscador y filtro por estilo; con el texto ya en 3D, elegir otra fuente lo cambia al momento.
 - **SVG vectorial:** los SVG se construyen desde sus propios trazados: curvas exactas, agujeros según su fill-rule, todos sus colores (también degradados) y el orden de pintado, con cada color en su capa. Los trazos (iconos de línea) y los textos se dibujan con su grosor, remates, discontinuidad y fuentes y se convierten en piezas. Pegar código SVG con Ctrl+V (Figma «Copy as SVG», Illustrator) también funciona. Si el SVG lleva imágenes incrustadas, se traza como imagen; también se puede elegir así en «Recorte».
 - **Capas:** con «Separar por colores» (o en un SVG, sus colores) cada color del logo es una capa: icono, texto, borde… Cada capa tiene su grosor (sale hacia delante), su material y se puede ocultar, y hay animaciones que las usan («Por capas», «Capas fuera», «Despiece»).
 - **Recorte:** separa el logo del fondo de forma automática (transparencia o color del borde), por transparencia, por color (con cuentagotas) o por luminosidad. Tiene umbral, quitar motas, rellenar huecos pequeños, unir fragmentos, inversión, relleno de agujeros y una vista previa antes / comparar / después. «Editar a mano…» abre un editor grande con pincel para borrar, recuperar (lo que el recorte tomó por fondo) o suavizar bordes, y clic para quitar una pieza o rellenar un hueco; las ediciones se guardan con el proyecto y se deshacen con Ctrl+Z.
@@ -160,3 +161,4 @@ El `.dmg` solo se puede compilar en un Mac, así que lo hace GitHub Actions ([.g
 - mp4-muxer 5.2.2: MIT
 - webm-muxer 5.1.4: MIT (con un parche de una línea para el alfa, comentado)
 - Microsoft.Web.WebView2: licencia de Microsoft
+- 84 fuentes de Google Fonts para el texto 3D: 77 con SIL Open Font License 1.1 y 7 con Apache License 2.0 (avisos de copyright y licencias en [wwwroot/fonts/LICENCIAS.txt](src/ImageTo3D/wwwroot/fonts/LICENCIAS.txt))

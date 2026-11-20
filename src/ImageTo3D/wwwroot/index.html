@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ImageTo3D</title>
   <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="fonts/fonts.css">
   <script>
     // Start-up failures go to the desktop host so it can show a recoverable error screen.
     // Capture phase also catches modules that fail to load, which never reach app.js.
@@ -53,17 +54,16 @@
         </div>
         <div class="text-row">
           <input id="text-input" type="text" maxlength="40" placeholder="…o escribe un texto 3D">
-          <select id="font-select">
-            <option value="900 400px 'Arial Black', Arial">Arial Black</option>
-            <option value="400 400px Impact">Impact</option>
-            <option value="900 400px 'Segoe UI Black', 'Segoe UI'">Segoe Black</option>
-            <option value="700 400px Bahnschrift">Bahnschrift</option>
-            <option value="700 400px Georgia">Georgia</option>
-            <option value="700 400px 'Comic Sans MS'">Comic</option>
-            <option value="700 400px Consolas">Consolas</option>
-            <option value="italic 700 400px 'Segoe Script'">Script</option>
-          </select>
+          <button class="btn small font-btn" id="font-btn" type="button" aria-expanded="false" aria-controls="font-picker">Montserrat</button>
           <button class="btn small" id="btn-text">Crear</button>
+        </div>
+        <div class="font-picker" id="font-picker" hidden>
+          <div class="font-tools">
+            <input class="font-search" type="search" placeholder="Buscar fuente" aria-label="Buscar fuente">
+            <select class="select font-cat" aria-label="Estilo de fuente"></select>
+          </div>
+          <div class="font-list" role="listbox" aria-label="Fuentes"></div>
+          <p class="note font-hint">Con tu texto en 3D, elegir otra fuente lo cambia al momento.</p>
         </div>
       </section>
 

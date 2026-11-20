@@ -117,6 +117,21 @@ async function runSmoke({ window, dir, waitFor, consoleErrors }) {
     return true;`);
   check('Efectos (shaders)', fx && !consoleErrors.some(e => /shader|program|webgl/i.test(e)), consoleErrors.slice(0, 3).join(' | '));
 
+  // Typed text: every bundled font loads from app://, and one picked in the picker becomes 3D.
+  const text = await exec(`
+    const q = s => document.querySelector(s), wait = ms => new Promise(r => setTimeout(r, ms));
+    const { FONTS, cssFont } = await import('/js/fonts.js');
+    const loaded = (await Promise.all(FONTS.map(f => document.fonts.load(cssFont(f, 100), 'Añ')))).filter(l => l.length).length;
+    q('#text-input').value = 'Hola';
+    q('#font-btn').click();
+    q('.font-item[data-id=pacifico]').click();
+    q('#btn-text').click();
+    for (let i = 0; i < 60 && !/Hola/.test(q('#hud').textContent); i++) await wait(250);
+    await wait(500);
+    return { loaded, total: FONTS.length, hud: q('#hud').textContent, pieces: window.__app.logo.children.length, font: q('#font-btn').textContent };`);
+  check('Fuentes del texto', text.loaded === text.total, `${text.loaded} de ${text.total}`);
+  check('Texto 3D con fuente', /Texto/.test(text.hud) && text.pieces > 0 && text.font === 'Pacifico', `${text.font} · ${text.hud}`);
+
   report.consoleErrors = consoleErrors.slice(0, 10);
   report.ok = report.checks.every(c => c.ok);
   return report;
@@ -131,7 +146,9 @@ async function runSmokeNoGpu({ window, engineError }) {
   const check = (name, ok, detail = '') => { report.checks.push({ name, ok: !!ok, detail }); };
   const env = await wc.executeJavaScript(`(async () => {
     const out = { url: location.href, bridge: typeof window.imageto3dHost?.postMessage === 'function', webgl2: !!document.createElement('canvas').getContext('webgl2') };
-    out.files = await Promise.all(['/index.html', '/js/app.js', '/js/host.js'].map(async f => { try { return (await fetch(f)).ok; } catch { return false; } }));
+    out.files = await Promise.all(['/index.html', '/js/app.js', '/js/host.js', '/fonts/fonts.css'].map(async f => { try { return (await fetch(f)).ok; } catch { return false; } }));
+    const { FONTS, cssFont } = await import('/js/fonts.js');
+    out.fonts = (await Promise.all(FONTS.map(f => document.fonts.load(cssFont(f, 100), 'Añ')))).filter(l => l.length).length + ' de ' + FONTS.length;
     try { out.h264 = (await VideoEncoder.isConfigSupported({ codec: 'avc1.640028', width: 1280, height: 720, bitrate: 4e6, framerate: 30 })).supported; }
     catch (e) { out.h264 = 'error: ' + e.message; }
     return out;
@@ -140,6 +157,7 @@ async function runSmokeNoGpu({ window, engineError }) {
   check('La app arranca y abre el motor', env.url === 'app://imageto3d/index.html', env.url);
   check('Archivos del motor servidos', env.files.every(Boolean), env.files.join(', '));
   check('Puente con el host', env.bridge);
+  check('Fuentes del texto', /^(\d+) de \1$/.test(env.fonts), env.fonts);
   check('Codificador H.264', env.h264 === true, String(env.h264));
   check('Sin GPU: falla solo WebGL', !env.webgl2 && /WebGL context/i.test(engineError), engineError);
   report.ok = report.checks.every(c => c.ok);

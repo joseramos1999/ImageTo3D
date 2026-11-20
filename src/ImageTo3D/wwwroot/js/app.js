@@ -20,6 +20,8 @@ import { openSink, openSinkIn, pickFolder, saveBlobIn } from './filesink.js';
 import { SIZES, GUIDES, sizeOf, evenClamp, migrateSettings } from './formats.js';
 import { host, localizeKeys } from './host.js';
 import { demoLogo, textLogo } from './sources.js';
+import { cssFont, loadFont } from './fonts.js';
+import { initFontPicker } from './font-ui.js';
 import { parseVectorSvg, vectorVerdict, vectorLayout, vectorTexture, vectorOutlines, vectorPreview, uncoveredShare } from './vector.js';
 import { renderLayersPanel } from './layers-ui.js';
 import { initRelief, reliefOptions } from './relief-ui.js';
@@ -58,6 +60,7 @@ const migrateTuning = s => {
 };
 const migrate = s => migrateTuning(migrateSides(migrateAnimationSettings(migrateSettings(s))));
 const STORE_KEY = 'imageto3d.settings.v1';
+const FONT_KEY = 'imageto3d.textFont';   // the text generator's last font (per computer, not part of a work)
 const state = { ...DEFAULTS };
 try { Object.assign(state, migrate(JSON.parse(localStorage.getItem(STORE_KEY) || '{}'))); } catch { /* fresh start */ }
 const save = () => {
@@ -2423,13 +2426,30 @@ function init() {
   $('#btn-open').onclick = () => fileInput.click();
   $('#drop').onclick = () => fileInput.click();
   fileInput.onchange = () => { openFile(fileInput.files[0]); fileInput.value = ''; };
-  const makeText = () => {
+  // The text the generator made last ({ text, project }): while it is the open work, choosing
+  // another font remakes it in place (the same project) instead of adding one per font tried.
+  let lastText = null;
+  const makeText = async (inPlace = false) => {
     const text = $('#text-input').value.trim();
     if (!text) return;
-    openGeneration++;
-    loadCanvas(textLogo(text, $('#font-select').value, state.color), `Texto «${text}»`, true).then(ok => ok && startProject());
+    const generation = ++openGeneration;
+    const font = fontPicker.font;
+    const loaded = await loadFont(font, text);
+    if (generation !== openGeneration) return;   // another font or file came in meanwhile
+    if (!loaded && /[a-z0-9À-ɏ]/i.test(text)) toast(`No se pudo cargar la fuente ${font.family}: el texto sale con otra.`, 'error');
+    const keep = inPlace && lastText?.text === text && lastText.project === projectId;
+    const ok = await loadCanvas(textLogo(text, cssFont(font, 400), state.color), `Texto «${text}»`, true);
+    if (!ok) return;
+    startProject(keep ? projectId : undefined);
+    lastText = { text, project: projectId };
   };
-  $('#btn-text').onclick = makeText;
+  const fontPicker = initFontPicker({ button: $('#font-btn'), panel: $('#font-picker'), input: $('#text-input') },
+    (() => { try { return localStorage.getItem(FONT_KEY); } catch { return null; } })(),
+    font => {
+      try { localStorage.setItem(FONT_KEY, font.id); } catch { /* ignore */ }
+      if (lastText && lastText.project === projectId && $('#text-input').value.trim()) makeText(true);
+    });
+  $('#btn-text').onclick = () => makeText();
   $('#text-input').addEventListener('keydown', e => { if (e.key === 'Enter') makeText(); });
   $('#btn-export').onclick = () => runExport();
   $('#btn-save').onclick = saveProjectFile;
